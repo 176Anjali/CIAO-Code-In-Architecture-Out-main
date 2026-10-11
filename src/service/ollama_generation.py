@@ -228,12 +228,22 @@ def _validate_architecture_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
         ids.add(str(item["id"]))
         normalized_external.append(item)
     normalized_relationships = []
+    endpoint_ids = {str(item["id"]): str(item["id"]) for item in [*normalized_components, *normalized_external]}
+    endpoint_ids.update({str(item["name"]): str(item["id"]) for item in [*normalized_components, *normalized_external]})
     for item in relationships:
-        if not isinstance(item, dict) or not item.get("source_id") or not item.get("target_id") or not item.get("label"):
-            raise RuntimeError("Every architecture relationship requires source_id, target_id, and label")
-        if str(item["source_id"]) not in ids or str(item["target_id"]) not in ids:
-            raise RuntimeError("Architecture relationship references an unknown component")
+        if not isinstance(item, dict):
+            raise RuntimeError("Every architecture relationship must be an object")
         item = dict(item)
+        source = item.get("source_id") or item.get("source") or item.get("from") or item.get("source_component")
+        target = item.get("target_id") or item.get("target") or item.get("to") or item.get("target_component")
+        label = item.get("label") or item.get("type") or item.get("relationship") or item.get("description")
+        if not source or not target or not label:
+            raise RuntimeError("Every architecture relationship requires source_id, target_id, and label")
+        item["source_id"] = endpoint_ids.get(str(source), str(source))
+        item["target_id"] = endpoint_ids.get(str(target), str(target))
+        if item["source_id"] not in ids or item["target_id"] not in ids:
+            raise RuntimeError("Architecture relationship references an unknown component")
+        item["label"] = str(label)
         item["direction"] = item.get("direction", "forward")
         item["evidence"] = _evidence_list(item.get("evidence"))
         normalized_relationships.append(item)

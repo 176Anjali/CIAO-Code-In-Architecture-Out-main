@@ -88,6 +88,30 @@ def test_ollama_normalizes_string_external_actors(monkeypatch):
     assert [item["name"] for item in result["external_actors_or_services"]] == ["GitHub Actions", "Ollama"]
     assert result["external_actors_or_services"][0]["id"] == "external-github-actions"
 
+def test_ollama_normalizes_relationship_field_aliases(monkeypatch):
+    import ollama
+
+    spec = _architecture_json()
+    spec["components"].append({"id": "model", "name": "Model", "responsibility": "Runs inference"})
+    spec["relationships"] = [{"source": "API", "target": "Model", "type": "calls model", "evidence": ["app.py:3-5"]}]
+
+    class FakeClient:
+        def __init__(self, host):
+            pass
+
+        def chat(self, **kwargs):
+            return {"message": {"content": json.dumps(spec)}}
+
+    monkeypatch.setattr(ollama, "Client", FakeClient)
+    result = generate_architecture_spec(
+        {"nodes": [], "edges": []}, readme="",
+        context={"project_name": "Target", "submitted_source": "target"},
+        evidence="app.py:1-5",
+    )
+    assert result["relationships"][0]["source_id"] == "api"
+    assert result["relationships"][0]["target_id"] == "model"
+    assert result["relationships"][0]["label"] == "calls model"
+
 def test_ollama_retries_invalid_json_once_then_accepts(monkeypatch):
     import ollama
 
