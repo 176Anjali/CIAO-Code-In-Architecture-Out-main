@@ -34,7 +34,7 @@ model. The model response is included in the project-specific report; generation
 if Ollama is unavailable or returns empty content. Architecture diagrams are generated
 deterministically from the validated knowledge graph, so they do not require a model call.
 CIAO defaults to `llama3.2:3b` at `http://localhost:11434`, uses a 4,096-token context,
-384 tokens per module-summary call, and 1,024 tokens for the final report. Set `OLLAMA_HOST`
+384 tokens per module-summary call, and 2,048 tokens for the final report. Set `OLLAMA_HOST`
 and `OLLAMA_MODEL` as needed. On an 8 GB CPU computer, if `llama3.2:3b` cannot load, run
 `ollama pull llama3.2:1b`, then in PowerShell run `$env:OLLAMA_MODEL = "llama3.2:1b"` and
 restart CIAO; the application does not switch models silently.
@@ -54,7 +54,7 @@ prompt version, model name, and chunk content hash. The GitHub Actions workflow 
 prior cache and saves the updated cache. `.gitignore` excludes this local cache from project
 commits. You can configure `CIAO_OLLAMA_NUM_CTX` (default `4096`),
 `CIAO_OLLAMA_SUMMARY_NUM_PREDICT` (default `384`), `CIAO_OLLAMA_NUM_PREDICT` (default
-`1024`), `CIAO_OLLAMA_KEEP_ALIVE` (default `10m`), and `CIAO_SUMMARY_CHUNK_CHARS` (default
+`2048`), `CIAO_OLLAMA_KEEP_ALIVE` (default `10m`), and `CIAO_SUMMARY_CHUNK_CHARS` (default
 `12000`).
 
 ## GitHub synchronization

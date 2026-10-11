@@ -54,7 +54,7 @@ jobs:
           OLLAMA_MODEL: ${{ vars.CIAO_OLLAMA_MODEL || 'llama3.2:3b' }}
           CIAO_CACHE_DIR: ${{ github.workspace }}/.ciao-cache
           CIAO_OLLAMA_NUM_CTX: ${{ vars.CIAO_OLLAMA_NUM_CTX || '4096' }}
-          CIAO_OLLAMA_NUM_PREDICT: ${{ vars.CIAO_OLLAMA_NUM_PREDICT || '1024' }}
+          CIAO_OLLAMA_NUM_PREDICT: ${{ vars.CIAO_OLLAMA_NUM_PREDICT || '2048' }}
           CIAO_OLLAMA_SUMMARY_NUM_PREDICT: ${{ vars.CIAO_OLLAMA_SUMMARY_NUM_PREDICT || '384' }}
           CIAO_OLLAMA_KEEP_ALIVE: ${{ vars.CIAO_OLLAMA_KEEP_ALIVE || '10m' }}
           CIAO_SUMMARY_CHUNK_CHARS: ${{ vars.CIAO_SUMMARY_CHUNK_CHARS || '12000' }}

@@ -2,6 +2,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import uuid
 import io
 import zipfile
@@ -195,7 +196,7 @@ def test_generate_uploaded_source_in_selected_formats():
     diagram = client.get(body["diagram"]["url"]).content
     assert b"<svg" in diagram
     assert b"hello.py" in diagram
-    assert b"Defines 1 function" in diagram
+    assert b"1 function" in diagram
     assert b"SIBLING_FILE" not in diagram
 
 
@@ -347,9 +348,8 @@ def test_report_contains_metadata_and_fallback_diagram_for_non_python_upload():
     report = client.get(body["documentation"]["url"])
     assert b"documentation.pdf" in report.content
     assert b"Generated at:" in report.content
-    assert b"C4 and arc42 architecture views" in report.content
-    assert b"REST APIs, data flow, and storage" in report.content
-    assert b"Limitations" in report.content
+    assert b"Introduction" in report.content
+    assert b"Evidence reviewed" in report.content
     assert client.get(body["diagram"]["url"]).content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
@@ -682,7 +682,56 @@ def test_architecture_is_deterministic_and_omits_sibling_edges(tmp_path):
     spec = build_architecture_spec_from_graph(graph, repository_path=repo, project_name="Sample")
     assert len(spec["components"]) == 2
     assert len(spec["relationships"]) == 1
-    assert spec["relationships"][0]["label"] == "imports file"
+    assert spec["relationships"][0]["label"] == "imports"
+    assert not spec["external_actors_or_services"]
+
+
+def test_module_summary_includes_line_cited_source_evidence(tmp_path):
+    from src.service.ollama_generation import summarize_graph_modules
+
+    repo = tmp_path / "repo"
+    (repo / "app").mkdir(parents=True)
+    source = repo / "app" / "api.py"
+    source.write_text(
+        "from app.services import predict\n"
+        "@router.post('/predict')\n"
+        "async def predict_image(file):\n"
+        "    return predict(file)\n",
+        encoding="utf-8",
+    )
+    graph = {
+        "nodes": [
+            {"id": "file", "type": "file", "name": "api.py", "path": str(source.resolve())},
+            {"id": "function", "type": "function", "name": "predict_image", "file": str(source.resolve())},
+        ],
+        "edges": [],
+    }
+    evidence = summarize_graph_modules(graph, repo)[0]["source_evidence"]
+    assert any("api.py:L1" in item and "from app.services" in item for item in evidence)
+    assert any("api.py:L2-L3" in item and "router.post" in item for item in evidence)
+    assert any("calls:" in item and "predict" in item for item in evidence)
+
+
+def test_pdf_report_wraps_and_paginates_and_docx_uses_heading_styles(tmp_path):
+    from src.service.report_generator import write_document
+
+    report = "# Example Project\n\n## Abstract\n\n" + "\n\n".join(
+        f"Section {index}: " + ("evidence-based project explanation " * 12)
+        for index in range(100)
+    )
+    pdf = tmp_path / "documentation.pdf"
+    docx = tmp_path / "documentation.docx"
+    write_document(report, pdf, "pdf")
+    write_document(report, docx, "docx")
+    content = pdf.read_bytes()
+    assert content.startswith(b"%PDF-1.4")
+    page_count = re.search(rb"/Count (\d+)", content)
+    assert page_count and int(page_count.group(1)) > 1
+    with zipfile.ZipFile(docx) as archive:
+        document = archive.read("word/document.xml")
+        styles = archive.read("word/styles.xml")
+    assert b"Heading1" in document
+    assert b"Heading1" in styles
 
 
 def test_repository_file_discovery_applies_exclusions_and_gitignore(tmp_path):

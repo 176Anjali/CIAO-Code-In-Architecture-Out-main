@@ -19,110 +19,45 @@ def architecture_text(
 ) -> str:
     context = context or {}
     nodes = [node for node in graph.get("nodes", []) if isinstance(node, dict)]
-    edges = [edge for edge in graph.get("edges", []) if isinstance(edge, dict)]
-    counts: Dict[str, int] = {}
-    for node in nodes:
-        kind = str(node.get("type", "unknown"))
-        counts[kind] = counts.get(kind, 0) + 1
-    relationships: Dict[str, int] = {}
-    for edge in edges:
-        kind = str(edge.get("relationship", "unknown"))
-        relationships[kind] = relationships.get(kind, 0) + 1
-    file_names = sorted(
-        Path(str(node.get("path", node.get("name", node.get("id", ""))))).name
-        for node in nodes
-        if node.get("type") == "file"
-    )
-    readme_excerpt = readme.strip()[:4000] if readme.strip() else "No README was found."
-    evidence = _repository_evidence(repository_path, readme)
+    file_count = sum(1 for node in nodes if node.get("type") == "file")
+    manifest = context.get("file_manifest") or []
+    if not manifest:
+        manifest = sorted(
+            Path(str(node.get("path", ""))).as_posix()
+            for node in nodes if node.get("type") == "file" and node.get("path")
+        )
     def value(key: str, fallback: str = "Unavailable") -> str:
         return metadata.get(key) or fallback
-
-    return f"""CIAO Architecture Report
-
-Report metadata
-- Output filename: {value("output_filename")}
-- Output format: {value("output_format")}
-- Generated at: {value("generated_at")}
-- Submitted source: {context.get("submitted_source") or value("source_name")}
-- Target project: {context.get("project_name") or value("source_name")}
-- Resolved target repository: {context.get("repository_path") or repository_path}
-- Branch: {value("branch")}
-- Source commit message: {value("commit_message")}
-- Source commit ID: {value("commit_sha")}
-- GitHub sync time: {value("sync_at", "Not a GitHub sync run")}
-
-Analyzed revision
-- Repository: {context.get("project_name") or value("source_name")}
-- Commit: {commit_sha}
-- Source files represented in graph: {counts.get("file", 0)}
-- Graph nodes: {len(nodes)}
-- Relationships: {len(edges)}
-
-Abstract
-{evidence["summary"]}
-
-Introduction
-{evidence["introduction"]}
-
-Problem, goals, and scope
-{evidence["problem"]}
-
-Repository overview
-The analyzed input contains {counts.get("file", 0)} detected files, {counts.get("module", 0)}
-modules, {counts.get("class", 0)} classes, {counts.get("function", 0)} functions, and
-{counts.get("method", 0)} methods.
-
-Technologies, frameworks, dependencies, and resources
-{evidence["technologies"]}
-
-Repository structure and important files
-Detected file names:
-{chr(10).join(f"- {name}" for name in file_names[:80]) or "- No file names were available."}
-
-How the project works and its pipelines
-{evidence["pipelines"]}
-
-C4 and arc42 architecture views
-Context: {evidence["context"]}
-Containers and components are represented only by detected graph nodes and relationships.
-The arc42 sections for context, building blocks, runtime/data flow, deployment, and risks are
-limited to repository evidence listed in this report.
-
-Evidence-grounded project documentation
-{ollama_description or "Unavailable because Ollama generation was not completed."}
-
-REST APIs, data flow, and storage
-APIs: {evidence["apis"]}
-Storage/resources: {evidence["storage"]}
-Data flow: detected relationships are summarized below.
-{chr(10).join(f"- {kind}: {value}" for kind, value in sorted(relationships.items())) or "- No relationships were detected."}
-
-Build, testing, CI/CD, and deployment
-{evidence["delivery"]}
-
-Setup and usage
-{evidence["setup"]}
-
-Repository README evidence
-{readme_excerpt}
-
-Architecture view
-The accompanying architecture image shows the supported graph nodes and relationships. It is a
-structural view of evidence found in source code, not a claim about runtime deployment.
-
-Limitations
-- A single source file cannot establish the complete project purpose, deployment model, or
-  relationships outside that file.
-- APIs, storage, CI/CD, and security properties are reported only when supported by source or
-  repository files.
-- Dynamic behavior and external services may not be visible to static analysis.
-
-Source reference
-- Generated from commit: {commit_sha}
-- Repository input: {repository_path}
-- Evidence files inspected: {evidence["inspected"]}
-"""
+    project = context.get("project_name") or value("source_name")
+    report_body = (ollama_description or "").strip()
+    report_body = re.sub(r"^#\s+Project Documentation\s*", "", report_body, count=1)
+    if report_body and not report_body.startswith("## "):
+        report_body = re.sub(r"^#\s+.*\n", "", report_body, count=1)
+    submitted = context.get("submitted_source") or value("source_repository", project)
+    lines = [
+        f"# {project} — Technical Project Documentation",
+        "",
+        f"**Output file:** {value('output_filename')} ({value('output_format')})  ",
+        f"**Generated at:** {value('generated_at')}  ",
+        f"**Submitted source:** {submitted}  ",
+        f"**Branch:** {value('branch')}  ",
+        f"**Source commit ID:** {value('commit_sha', commit_sha)}  ",
+        f"**Source commit message:** {value('commit_message')}  ",
+        f"**GitHub sync time:** {value('sync_at', 'Not a GitHub sync run')}  ",
+        f"**Files analyzed:** {len(manifest) or file_count}",
+        "",
+        report_body or "## Report generation unavailable\n\nNo report content was produced.",
+        "",
+        "## Evidence reviewed",
+        "The report is based on the submitted revision. The paths below identify repository files available to the analyzer.",
+        "",
+    ]
+    lines.extend(f"- {chr(96)}{path}{chr(96)}" for path in manifest[:60])
+    if len(manifest) > 60:
+        lines.append(f"- … and {len(manifest) - 60} additional files")
+    if context.get("sync_at"):
+        lines.extend(["", f"**Synchronized at:** {value('sync_at')}"])
+    return "\n".join(lines).strip() + "\n"
 
 
 def _repository_evidence(repository_path: Path, readme: str) -> Dict[str, str]:
@@ -191,37 +126,91 @@ def write_diagram(architecture_spec: Dict[str, Any], path: Path, fmt: str) -> No
 def _write_docx(text: str, path: Path) -> None:
     import zipfile
 
-    paragraphs = "".join(
-        f"<w:p><w:r><w:t xml:space=\"preserve\">{html.escape(line)}</w:t></w:r></w:p>"
-        for line in text.splitlines()
-    )
+    paragraphs = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        clean = line.strip()
+        style = "Normal"
+        if clean.startswith("# "):
+            style, clean = "Title", clean[2:]
+        elif clean.startswith("## "):
+            style, clean = "Heading1", clean[3:]
+        elif clean.startswith("### "):
+            style, clean = "Heading2", clean[4:]
+        elif clean.startswith("- "):
+            style, clean = "ListParagraph", "• " + clean[2:]
+        clean = re.sub(r"\*\*(.*?)\*\*", r"\1", clean).replace(chr(96), "")
+        paragraphs.append(
+            f'<w:p><w:pPr><w:pStyle w:val="{style}"/></w:pPr>'
+            f'<w:r><w:t xml:space="preserve">{html.escape(clean)}</w:t></w:r></w:p>'
+        )
     document = f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{paragraphs}</w:body></w:document>"""
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{''.join(paragraphs)}<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr></w:body></w:document>"""
     content_types = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>"""
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/></Types>"""
     rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>"""
+    document_rels = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>"""
+    styles = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/><w:rPr><w:rFonts w:ascii="Aptos" w:hAnsi="Aptos"/><w:sz w:val="21"/><w:color w:val="26352B"/></w:rPr><w:pPr><w:spacing w:after="140" w:line="300"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Title"><w:name w:val="Title"/><w:basedOn w:val="Normal"/><w:rPr><w:rFonts w:ascii="Aptos Display" w:hAnsi="Aptos Display"/><w:b/><w:sz w:val="36"/><w:color w:val="263B2B"/></w:rPr><w:pPr><w:spacing w:before="120" w:after="280"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="27"/><w:color w:val="385C37"/></w:rPr><w:pPr><w:keepNext/><w:spacing w:before="300" w:after="130"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:basedOn w:val="Normal"/><w:rPr><w:b/><w:sz w:val="23"/><w:color w:val="526B4A"/></w:rPr><w:pPr><w:keepNext/><w:spacing w:before="220" w:after="100"/></w:pPr></w:style>
+<w:style w:type="paragraph" w:styleId="ListParagraph"><w:name w:val="List Paragraph"/><w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="360"/></w:pPr></w:style>
+</w:styles>"""
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", content_types)
         archive.writestr("_rels/.rels", rels)
         archive.writestr("word/document.xml", document)
+        archive.writestr("word/_rels/document.xml.rels", document_rels)
+        archive.writestr("word/styles.xml", styles)
 
 
 def _write_pdf(text: str, path: Path) -> None:
-    lines = [line[:110] for line in text.splitlines()]
-    content = ["BT", "/F1 9 Tf", "50 760 Td"]
-    for line in lines[:140]:
-        escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        content.append(f"({escaped}) Tj")
-        content.append("0 -12 Td")
-    content.append("ET")
-    stream = "\n".join(content).encode("latin-1", "replace")
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
-    ]
+    import textwrap
+
+    page_lines: List[List[tuple[str, int, int]]] = [[]]
+    y = 742
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            y -= 7
+            continue
+        if line.startswith("#"):
+            line = line.lstrip("#").strip()
+            font_size, leading = (17, 24) if raw.startswith("# ") else (12, 17)
+        else:
+            font_size, leading = 9, 13
+            if line.startswith("- "):
+                line = "• " + line[2:]
+            line = re.sub(r"\*\*(.*?)\*\*", r"\1", line).replace(chr(96), "")
+        width = max(42, int(510 / (font_size * 0.52)))
+        wrapped = textwrap.wrap(line, width=width, break_long_words=True, break_on_hyphens=True) or [""]
+        if y - leading * len(wrapped) < 54:
+            page_lines.append([])
+            y = 742
+        for part in wrapped:
+            page_lines[-1].append((part, font_size, y))
+            y -= leading
+
+    objects: List[bytes] = [b"<< /Type /Catalog /Pages 2 0 R >>", b""]
+    page_refs = []
+    font_id = 3 + len(page_lines) * 2
+    for index, lines in enumerate(page_lines):
+        page_id, stream_id = 3 + index * 2, 4 + index * 2
+        page_refs.append(f"{page_id} 0 R")
+        commands = ["BT"]
+        for line, size, baseline in lines:
+            escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
+            commands.extend([f"/F1 {size} Tf", f"50 {baseline} Td", f"({escaped}) Tj", f"-50 {-baseline} Td"])
+        commands.extend(["ET", "BT", "/F1 8 Tf", "50 28 Td", f"(CIAO Project Documentation - {index+1}/{len(page_lines)}) Tj", "ET"])
+        stream = "\n".join(commands).encode("cp1252", "replace")
+        page = f"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 {font_id} 0 R >> >> /Contents {stream_id} 0 R >>".encode()
+        stream_obj = b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream"
+        objects.extend([page, stream_obj])
+    objects[1] = f"<< /Type /Pages /Kids [{' '.join(page_refs)}] /Count {len(page_lines)} >>".encode()
+    objects.append(b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>")
     output = bytearray(b"%PDF-1.4\n")
     offsets = [0]
     for index, obj in enumerate(objects, 1):
@@ -288,57 +277,111 @@ def _png(graph: Dict[str, Any]) -> bytes:
 
 
 def _architecture_svg(spec: Dict[str, Any]) -> str:
-    components = [item for item in spec.get("components", []) if item.get("id")][:40]
-    external = [item for item in spec.get("external_actors_or_services", []) if item.get("id")][:20]
+    components = [item for item in spec.get("components", []) if item.get("id")][:10]
+    external = [dict(item, layer=0) for item in spec.get("external_actors_or_services", []) if item.get("id")][:2]
     nodes = external + components
+    positions, width, height, _ = _diagram_layout(nodes)
+    boxes, edges, labels = [], [], []
     ids = {item["id"] for item in nodes}
-    width, height = 1400, max(360, ((len(nodes) + 4) // 5) * 120)
-    positions = {item["id"]: (150 + (i % 5) * 270, 110 + (i // 5) * 120) for i, item in enumerate(nodes)}
-    lines, labels = [], []
-    for relationship in spec.get("relationships", []):
-        start = positions.get(relationship.get("source_id"))
-        end = positions.get(relationship.get("target_id"))
-        if not start or not end or relationship.get("source_id") not in ids or relationship.get("target_id") not in ids:
+    for relation in spec.get("relationships", [])[:14]:
+        source, target = relation.get("source_id"), relation.get("target_id")
+        if source not in positions or target not in positions:
             continue
-        lines.append(f'<line x1="{start[0]}" y1="{start[1]}" x2="{end[0]}" y2="{end[1]}" stroke="#7aa2d8" stroke-width="2" marker-end="url(#arrow)"/>')
-        labels.append(f'<text x="{(start[0] + end[0]) // 2}" y="{(start[1] + end[1]) // 2 - 8}" fill="#c5d7ef" font-size="12" text-anchor="middle">{html.escape(str(relationship.get("label", ""))[:34])}</text>')
-    boxes = []
+        sx, sy = positions[source]
+        tx, ty = positions[target]
+        direction = 1 if sx < tx else -1
+        x1, x2 = sx + direction * 120, tx - direction * 120
+        curve = (x1 + x2) / 2
+        edges.append(f'<path d="M{x1},{sy} C{curve},{sy} {curve},{ty} {x2},{ty}" fill="none" stroke="#78956c" stroke-width="2" marker-end="url(#arrow)"/>')
+        label_x, label_y = (x1 + x2) / 2, (sy + ty) / 2 - 7
+        labels.append(f'<text x="{label_x}" y="{label_y}" text-anchor="middle" fill="#596c55" font-size="10">{html.escape(str(relation.get("label", "depends on")))}</text>')
     for item in nodes:
         x, y = positions[item["id"]]
-        name = html.escape(str(item.get("name") or item["id"])[:28])
-        responsibility = html.escape(str(item.get("responsibility", ""))[:42])
-        fill = "#244b73" if item in components else "#3e526b"
-        boxes.append(f'<g><rect x="{x-105}" y="{y-38}" width="210" height="76" rx="12" fill="{fill}" stroke="#8bb8f2"/><text x="{x}" y="{y-12}" text-anchor="middle" fill="#f3f7ff" font-size="14">{name}</text><text x="{x}" y="{y+12}" text-anchor="middle" fill="#c5d7ef" font-size="10">{responsibility}</text></g>')
-    title = html.escape(str(spec.get("title", "Evidence-backed architecture")))
-    unknowns = spec.get("unknowns", [])
-    note = html.escape(("Unknowns: " + "; ".join(str(item) for item in unknowns[:2]))[:180])
-    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}"><defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#7aa2d8"/></marker></defs><rect width="100%" height="100%" fill="#0b1220"/><text x="40" y="42" fill="#f3f7ff" font-size="22">{title}</text><text x="40" y="{height-28}" fill="#9fb4d2" font-size="11">{note}</text>{"".join(lines)}{"".join(labels)}{"".join(boxes)}</svg>'
+        name = _svg_lines(str(item.get("name") or item["id"]), 28, 2)
+        desc = _svg_lines(str(item.get("responsibility", "")), 38, 2)
+        name_markup = "".join(f'<tspan x="{x}" dy="{0 if index == 0 else 16}">{html.escape(line)}</tspan>' for index, line in enumerate(name))
+        desc_markup = "".join(f'<tspan x="{x}" dy="{0 if index == 0 else 13}">{html.escape(line)}</tspan>' for index, line in enumerate(desc))
+        is_external = item in external
+        fill, stripe = ("#eff3e9", "#849a70") if is_external else ("#ffffff", "#95b86d")
+        boxes.append(f'<g><rect x="{x-120}" y="{y-52}" width="240" height="104" rx="9" fill="{fill}" stroke="#cfd9c9" stroke-width="1.5"/><rect x="{x-120}" y="{y-52}" width="5" height="104" rx="2" fill="{stripe}"/><text x="{x}" y="{y-12}" text-anchor="middle" fill="#26352b" font-size="13" font-weight="700">{name_markup}</text><text x="{x}" y="{y+20}" text-anchor="middle" fill="#6e7c6c" font-size="10">{desc_markup}</text></g>')
+    title = html.escape(str(spec.get("title", "Project architecture")))
+    note = "Boxes group project-owned source files. Arrows show detected calls or imports, not guaranteed runtime data flow."
+    return f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}" role="img" aria-label="{title}"><defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L8,3 z" fill="#78956c"/></marker></defs><rect width="100%" height="100%" fill="#f5f6ef"/><text x="42" y="42" fill="#26352b" font-size="22" font-weight="700">{title}</text><text x="42" y="66" fill="#778178" font-size="11">Logical project components · static code evidence</text><rect x="25" y="88" width="{width-50}" height="{height-145}" rx="12" fill="#fbfcf8" stroke="#dfe4d9"/>{''.join(edges)}{''.join(labels)}{''.join(boxes)}<text x="42" y="{height-28}" fill="#778178" font-size="10">{html.escape(note)}</text></svg>'
 
 
 def _architecture_png(spec: Dict[str, Any]) -> bytes:
     from PIL import Image, ImageDraw
     import io
 
-    components = [item for item in spec.get("components", []) if item.get("id")][:40]
-    external = [item for item in spec.get("external_actors_or_services", []) if item.get("id")][:20]
+    components = [item for item in spec.get("components", []) if item.get("id")][:10]
+    external = [dict(item, layer=0) for item in spec.get("external_actors_or_services", []) if item.get("id")][:2]
     nodes = external + components
-    width, height = 1400, max(360, ((len(nodes) + 4) // 5) * 120)
-    image = Image.new("RGB", (width, height), (11, 18, 32))
+    positions, width, height, _ = _diagram_layout(nodes)
+    image = Image.new("RGB", (width, height), (245, 246, 239))
     draw = ImageDraw.Draw(image)
-    positions = {item["id"]: (150 + (i % 5) * 270, 110 + (i // 5) * 120) for i, item in enumerate(nodes)}
-    for relationship in spec.get("relationships", []):
+    draw.text((42, 35), str(spec.get("title", "Project architecture"))[:90], fill=(38, 53, 43))
+    draw.text((42, 62), "Logical project components · static code evidence", fill=(119, 129, 120))
+    for relationship in spec.get("relationships", [])[:14]:
         start = positions.get(relationship.get("source_id"))
         end = positions.get(relationship.get("target_id"))
         if not start or not end:
             continue
-        draw.line((start[0], start[1], end[0], end[1]), fill=(122, 162, 216), width=3)
-        draw.text(((start[0] + end[0]) // 2, (start[1] + end[1]) // 2 - 12), str(relationship.get("label", ""))[:28], fill=(197, 215, 239), anchor="mm")
-    draw.text((40, 30), str(spec.get("title", "Evidence-backed architecture"))[:90], fill=(243, 247, 255))
+        sx, sy = start
+        tx, ty = end
+        sign = 1 if sx < tx else -1
+        x1, x2 = sx + sign * 120, tx - sign * 120
+        draw.line((x1, sy, x2, ty), fill=(120, 149, 108), width=2)
+        draw.polygon([(x2, ty), (x2 - sign * 9, ty - 5), (x2 - sign * 9, ty + 5)], fill=(120, 149, 108))
+        draw.text(((x1 + x2) // 2, (sy + ty) // 2 - 13), str(relationship.get("label", "depends on"))[:26], fill=(76, 96, 71), anchor="mm")
     for item in nodes:
         x, y = positions[item["id"]]
-        draw.rounded_rectangle((x - 105, y - 38, x + 105, y + 38), radius=12, fill=(36, 75, 115), outline=(139, 184, 242), width=2)
-        draw.text((x, y - 10), str(item.get("name") or item["id"])[:26], fill=(243, 247, 255), anchor="mm")
-        draw.text((x, y + 12), str(item.get("responsibility", ""))[:38], fill=(197, 215, 239), anchor="mm")
+        is_external = item in external
+        fill = (239, 243, 233) if is_external else (255, 255, 255)
+        stripe = (132, 154, 112) if is_external else (149, 184, 109)
+        draw.rounded_rectangle((x - 120, y - 52, x + 120, y + 52), radius=9, fill=fill, outline=(207, 217, 201), width=2)
+        draw.rounded_rectangle((x - 120, y - 52, x - 114, y + 52), radius=2, fill=stripe)
+        _draw_wrapped(draw, str(item.get("name") or item["id"]), (x, y - 22), 28, 2, (38, 53, 43), anchor="mm")
+        _draw_wrapped(draw, str(item.get("responsibility", "")), (x, y + 20), 34, 2, (110, 124, 108), anchor="mm")
+    draw.text((42, height - 30), "Arrows show detected calls or imports, not guaranteed runtime data flow.", fill=(119, 129, 120))
     result = io.BytesIO()
     image.save(result, format="PNG")
     return result.getvalue()
+
+
+def _diagram_layout(components: List[Dict[str, Any]]) -> tuple[Dict[str, tuple[int, int]], int, int, int]:
+    nodes = components or [{
+        "id": "no-components", "name": "No project components found",
+        "responsibility": "The submitted source did not provide enough code relationships.",
+    }]
+    layers: Dict[int, List[Dict[str, Any]]] = {}
+    for index, item in enumerate(nodes):
+        layer = max(0, min(4, int(item.get("layer", 0))))
+        layers.setdefault(layer, []).append(item)
+    max_layer = max(layers)
+    max_rows = max(len(items) for items in layers.values())
+    width = max(1040, 340 + max_layer * 310)
+    height = max(470, 190 + max_rows * 155)
+    positions = {}
+    for layer, items in layers.items():
+        offset = (max_rows - len(items)) * 75
+        for row, item in enumerate(items):
+            positions[item["id"]] = (165 + layer * 310, 160 + offset + row * 155)
+    return positions, width, height, max_rows
+
+
+def _svg_lines(text: str, width: int, max_lines: int) -> List[str]:
+    import textwrap
+
+    lines = textwrap.wrap(text, width=width, break_long_words=True) or [""]
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1][:max(1, width - 1)] + "…"
+    return lines
+
+
+def _draw_wrapped(draw: Any, text: str, xy: tuple[int, int], width: int, max_lines: int, fill: Any, anchor: str) -> None:
+    lines = _svg_lines(text, width, max_lines)
+    line_height = 13
+    start_y = xy[1] - (len(lines) - 1) * line_height / 2
+    for index, line in enumerate(lines):
+        draw.text((xy[0], start_y + index * line_height), line, fill=fill, anchor=anchor)
