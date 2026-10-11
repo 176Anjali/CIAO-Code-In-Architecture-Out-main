@@ -16,19 +16,19 @@ from ollama import AsyncClient
 
 BASE_DIR = Path(__file__).resolve().parent
 
-CONFIG_PATH = BASE_DIR / "repomix.config.json"
+CONFIG_PATH = Path(os.getenv("CIAO_REPOMIX_CONFIG_PATH", str(BASE_DIR / "repomix.config.json")))
 MEMORY_PATH = BASE_DIR / "prompt.json"
-FULL_CODE_PATH = BASE_DIR / "full_code.txt"
-MD_PATH = BASE_DIR / "arc42_documentation.txt"
+FULL_CODE_PATH = Path(os.getenv("CIAO_FULL_CODE_PATH", str(BASE_DIR / "full_code.txt")))
+MD_PATH = Path(os.getenv("CIAO_DOCUMENTATION_PATH", str(BASE_DIR / "arc42_documentation.txt")))
 
 MODEL_NAME = os.getenv("OLLAMA_MODEL", "llama3.2:3b")
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 # Qwen2.5-Coder 7B is listed with a 32K context window.
 # Leave some room for the generated response.
-TOKEN_LIMIT = int(os.getenv("OLLAMA_INPUT_TOKEN_LIMIT", "6000"))
-OLLAMA_CONTEXT_SIZE = int(os.getenv("OLLAMA_CONTEXT_SIZE", "8192"))
-OLLAMA_MAX_OUTPUT_TOKENS = int(os.getenv("OLLAMA_MAX_OUTPUT_TOKENS", "1536"))
+TOKEN_LIMIT = 20_000
+OLLAMA_CONTEXT_SIZE = 4_096
+OLLAMA_MAX_OUTPUT_TOKENS = 1_024
 
 enc = tiktoken.get_encoding("cl100k_base")
 client = AsyncClient(host=OLLAMA_HOST)

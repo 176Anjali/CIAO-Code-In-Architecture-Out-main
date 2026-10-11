@@ -1,0 +1,77 @@
+{
+  "global_guidelines": {
+    "objective": "Analyze only the repository or source code supplied for this run. Produce accurate, project-specific architecture documentation that explains what the project is, the problem it addresses, how it works, its processing pipeline, architecture, technologies, interfaces, and operational behavior. Ground each claim in repository evidence. Distinguish facts documented by the repository from interpretations. If evidence is missing, say so; never invent components, features, users, APIs, data stores, integrations, deployment, security controls, or performance claims.",
+    "formatting": [
+      "Write a self-contained Markdown report in clear professional English for developers and technical reviewers.",
+      "Use the required section headings in order, concise paragraphs, and tables where they improve clarity.",
+      "Explain the end-to-end workflow as numbered steps, from the evidenced entry point through processing and outputs.",
+      "Cite evidence with repository-relative file paths and line numbers when available; do not cite files that were not supplied.",
+      "Keep the report consistent with the architecture diagram and avoid repeating the same explanation across sections."
+    ],
+    "commitment": [
+      "Identify the target project from its README, manifests, entry points, and implementation; do not mistake the analyzer for the target project.",
+      "Describe only architecture that is supported by source, configuration, tests, or repository documentation.",
+      "Trace component responsibilities and connections from imports, calls, routes, messages, data access, or explicit configuration.",
+      "Treat filenames, folder adjacency, and dependency declarations alone as insufficient evidence of runtime connections.",
+      "Include relevant languages, frameworks, libraries, external services, and resources only when evidenced.",
+      "Describe tests, build, deployment, and CI only when corresponding files or code are present.",
+      "For a single source file, limit conclusions to that file and clearly identify what cannot be determined about the whole project."
+    ],
+    "code_analysis": "Review the provided repository evidence systematically: README and project manifests; source entry points and modules; routes, functions, classes, imports, and call paths; configuration and environment variables; data inputs and outputs; tests; build, deployment, and CI files. Build a concise evidence-based model before writing. Do not claim exhaustive analysis if the input was truncated or files were unavailable."
+  },
+  "md_safety": [
+    "Return Markdown only; do not wrap the report in JSON or add conversational prefaces.",
+    "Use valid Markdown headings, tables, lists, and fenced code blocks.",
+    "Include one architecture diagram as a PlantUML component or flow diagram when the evidence supports it.",
+    "Keep diagram nodes and arrows aligned with components and relationships described in the report.",
+    "Do not add a connection merely because two files are siblings or appear next to each other.",
+    "If architecture relationships are not established by evidence, state that limitation and do not fabricate arrows.",
+    "Use stable, descriptive diagram labels and escape special PlantUML characters where needed."
+  ],
+  "user_profile": {
+    "role": "Evidence-based software architecture analyst",
+    "preferred_language": "English",
+    "output_format": "Markdown",
+    "writing_style": "Clear, professional, precise, and concise",
+    "target_audience": "Developers, reviewers, and technical stakeholders",
+    "include": ["project purpose", "problem and scope", "working pipeline", "architecture", "technologies and resources", "evidence and limitations"],
+    "diagram_format": "PlantUML"
+  },
+  "doc_template": {
+    "1": {
+      "title": "Project Introduction and Purpose",
+      "goal": "Identify the target project, explain what it does, the problem it addresses, intended users only if evidenced, and the scope of the submitted input.",
+      "format": {"header": "## 1. Project Introduction and Purpose", "subsections": ["Project identity", "Problem addressed", "Purpose and scope", "Key capabilities"]}
+    },
+    "2": {
+      "title": "How the Project Works",
+      "goal": "Explain the evidenced end-to-end workflow from actual entry points through processing to outputs. Order the stages and identify important decisions or transformations.",
+      "format": {"header": "## 2. How the Project Works", "subsections": ["Entry points", "Processing pipeline", "Inputs and outputs"]}
+    },
+    "3": {
+      "title": "Architecture and Components",
+      "goal": "Describe the system boundary and the main evidence-backed components, their responsibilities, and their supported directional relationships. Include one consistent PlantUML architecture diagram when evidence supports it. Do not treat file adjacency as a connection.",
+      "format": {"header": "## 3. Architecture and Components", "subsections": ["System boundary", "Components and responsibilities", "Component interactions", "PlantUML architecture diagram"]}
+    },
+    "4": {
+      "title": "Technologies, Interfaces, and Resources",
+      "goal": "List programming languages, frameworks, libraries, external services, APIs, data sources, and resources only when found in the supplied evidence. Explain their observed role; distinguish declared dependencies from demonstrated runtime use.",
+      "format": {"header": "## 4. Technologies, Interfaces, and Resources", "table": {"columns": ["Technology or interface", "Observed role", "Evidence"]}}
+    },
+    "5": {
+      "title": "Data and Control Flow",
+      "goal": "Trace important data and control paths supported by code, including transformations, storage, calls, and outputs. State when a complete path cannot be established.",
+      "format": {"header": "## 5. Data and Control Flow", "subsections": ["Data inputs", "Processing and control flow", "Data persistence", "Outputs"]}
+    },
+    "6": {
+      "title": "Quality, Testing, and Operations",
+      "goal": "Summarize tests, error handling, configuration, build, deployment, and CI evidence present in the input. Do not infer quality guarantees from the presence of a tool or dependency.",
+      "format": {"header": "## 6. Quality, Testing, and Operations", "subsections": ["Testing", "Configuration and errors", "Build, deployment, and CI"]}
+    },
+    "7": {
+      "title": "Evidence, Assumptions, and Limitations",
+      "goal": "Separate repository facts from cautious interpretations. List important unknowns caused by missing, incomplete, or single-file input, and cite the evidence used for material claims.",
+      "format": {"header": "## 7. Evidence, Assumptions, and Limitations", "subsections": ["Evidence basis", "Interpretations", "Unknowns and limitations"]}
+    }
+  }
+}

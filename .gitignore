@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# VS Code
+.vscode/
+
+# VS Code Local History
+.history/
+
+# Secrets
+*.key
+*.pem
+secrets.json
+.env.*
+
+# Generated files
+output/
