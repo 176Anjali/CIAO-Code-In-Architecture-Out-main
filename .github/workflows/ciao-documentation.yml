@@ -3,6 +3,19 @@ name: CIAO Documentation Sync
 on:
   push:
     branches: ["**"]
+  workflow_call:
+    inputs:
+      document_format:
+        required: false
+        type: string
+        default: pdf
+      image_format:
+        required: false
+        type: string
+        default: png
+    secrets:
+      ollama_host:
+        required: false
 
 jobs:
   document-and-validate:
@@ -18,15 +31,6 @@ jobs:
         with:
           ref: ${{ github.sha }}
           fetch-depth: 0
-
-      - name: Restore CIAO Ollama summary cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .ciao-cache
-          key: ciao-ollama-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
-          restore-keys: |
-            ciao-ollama-${{ runner.os }}-${{ github.ref_name }}-
-            ciao-ollama-${{ runner.os }}-
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -46,25 +50,12 @@ jobs:
             --repo . `
             --branch "${{ github.ref_name }}" `
             --commit-sha "${{ github.sha }}" `
-            --document-format "${{ vars.CIAO_DOCUMENT_FORMAT || 'pdf' }}" `
-            --image-format "${{ vars.CIAO_IMAGE_FORMAT || 'png' }}" `
+            --document-format "${{ inputs.document_format || vars.CIAO_DOCUMENT_FORMAT || 'pdf' }}" `
+            --image-format "${{ inputs.image_format || vars.CIAO_IMAGE_FORMAT || 'png' }}" `
             --output-dir .
         env:
-          OLLAMA_HOST: ${{ secrets.CIAO_OLLAMA_HOST || vars.CIAO_OLLAMA_HOST || 'http://127.0.0.1:11434' }}
+          OLLAMA_HOST: ${{ secrets.ollama_host || secrets.CIAO_OLLAMA_HOST || vars.CIAO_OLLAMA_HOST || 'http://127.0.0.1:11434' }}
           OLLAMA_MODEL: ${{ vars.CIAO_OLLAMA_MODEL || 'llama3.2:3b' }}
-          CIAO_CACHE_DIR: ${{ github.workspace }}/.ciao-cache
-          CIAO_OLLAMA_NUM_CTX: ${{ vars.CIAO_OLLAMA_NUM_CTX || '4096' }}
-          CIAO_OLLAMA_NUM_PREDICT: ${{ vars.CIAO_OLLAMA_NUM_PREDICT || '2048' }}
-          CIAO_OLLAMA_SUMMARY_NUM_PREDICT: ${{ vars.CIAO_OLLAMA_SUMMARY_NUM_PREDICT || '384' }}
-          CIAO_OLLAMA_KEEP_ALIVE: ${{ vars.CIAO_OLLAMA_KEEP_ALIVE || '10m' }}
-          CIAO_SUMMARY_CHUNK_CHARS: ${{ vars.CIAO_SUMMARY_CHUNK_CHARS || '12000' }}
-
-      - name: Save CIAO Ollama summary cache
-        if: always() && !contains(github.event.head_commit.message, '[ciao-generated]')
-        uses: actions/cache/save@v4
-        with:
-          path: .ciao-cache
-          key: ciao-ollama-${{ runner.os }}-${{ github.ref_name }}-${{ github.sha }}
 
       - name: Commit generated files
         if: "!contains(github.event.head_commit.message, '[ciao-generated]')"

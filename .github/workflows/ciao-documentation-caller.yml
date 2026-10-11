@@ -1,0 +1,10 @@
+name: CIAO Documentation Caller Example
+
+on:
+  workflow_dispatch:
+
+jobs:
+  ciao:
+    uses: ./.github/workflows/ciao-documentation.yml
+    secrets:
+      ollama_host: ${{ secrets.CIAO_OLLAMA_HOST }}

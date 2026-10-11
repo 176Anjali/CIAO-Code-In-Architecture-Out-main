@@ -21,7 +21,7 @@ class ProjectAnalyzeRequest(BaseModel):
     project_id: Optional[str] = None
     branch: Optional[str] = None
     commit_sha: Optional[str] = None
-    pipeline: Optional[str] = "graph_validation"
+    pipeline: Optional[str] = PipelineName.REPOMIX_OLLAMA.value
 
 
 class GitHubWebhookResponse(BaseModel):
@@ -46,7 +46,7 @@ def web_application() -> FileResponse:
 async def generate_outputs(
     repository_url: Optional[str] = Form(default=None),
     document_format: str = Form(default="pdf"),
-    image_format: str = Form(default="svg"),
+    image_format: str = Form(default="png"),
     source_file: Optional[UploadFile] = File(default=None),
 ) -> dict:
     upload_bytes = await source_file.read() if source_file else None
@@ -67,7 +67,11 @@ async def generate_outputs(
 
 @app.get("/api/generate/{project_id}/documentation")
 def generated_documentation(project_id: str) -> FileResponse:
-    paths = list((service.output_dir / project_id).glob("documentation.*"))
+    paths = [
+        path
+        for path in (service.output_dir / project_id).glob("documentation.*")
+        if path.suffix.lower() in {".pdf", ".docx"}
+    ]
     if not paths:
         raise HTTPException(status_code=404, detail="Generated documentation not found")
     path = paths[0]
@@ -77,7 +81,11 @@ def generated_documentation(project_id: str) -> FileResponse:
 
 @app.get("/api/generate/{project_id}/diagram")
 def generated_diagram(project_id: str) -> FileResponse:
-    paths = list((service.output_dir / project_id).glob("architecture.*"))
+    paths = [
+        path
+        for path in (service.output_dir / project_id).glob("architecture.*")
+        if path.suffix.lower() in {".png", ".svg"}
+    ]
     if not paths:
         raise HTTPException(status_code=404, detail="Generated diagram not found")
     path = paths[0]
@@ -265,7 +273,7 @@ async def github_webhook(
             project_id=project_id,
             branch=(body.get("ref") or "").removeprefix("refs/heads/") or None,
             commit_sha=commit_sha,
-            pipeline=PipelineName.GRAPH_VALIDATION.value,
+            pipeline=PipelineName.REPOMIX_OLLAMA.value,
         )
     except (RuntimeError, ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
