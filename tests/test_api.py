@@ -65,6 +65,29 @@ def test_ollama_requests_constrained_json_and_accepts_valid_response(monkeypatch
     assert calls[0]["options"]["num_predict"] == 2048
 
 
+def test_ollama_normalizes_string_external_actors(monkeypatch):
+    import ollama
+
+    spec = _architecture_json()
+    spec["external_actors_or_services"] = ["GitHub Actions", "Ollama"]
+
+    class FakeClient:
+        def __init__(self, host):
+            pass
+
+        def chat(self, **kwargs):
+            return {"message": {"content": json.dumps(spec)}}
+
+    monkeypatch.setattr(ollama, "Client", FakeClient)
+    result = generate_architecture_spec(
+        {"nodes": [], "edges": []},
+        readme="",
+        context={"project_name": "Target", "submitted_source": "target"},
+        evidence=".github/workflows/ci.yml:1-4",
+    )
+    assert [item["name"] for item in result["external_actors_or_services"]] == ["GitHub Actions", "Ollama"]
+    assert result["external_actors_or_services"][0]["id"] == "external-github-actions"
+
 def test_ollama_retries_invalid_json_once_then_accepts(monkeypatch):
     import ollama
 
@@ -577,4 +600,3 @@ def test_repomix_ollama_subprocess_uses_utf8_environment(tmp_path, monkeypatch):
     )
     assert captured["PYTHONIOENCODING"] == "utf-8"
     assert captured["PYTHONUTF8"] == "1"
-

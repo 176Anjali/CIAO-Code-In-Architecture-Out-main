@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import zipfile
 from textwrap import wrap
 from pathlib import Path
@@ -213,7 +214,13 @@ def _validate_architecture_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
         ids.add(str(item["id"]))
         normalized_components.append(item)
     normalized_external = []
-    for item in spec.get("external_actors_or_services", []) or []:
+    for index, item in enumerate(spec.get("external_actors_or_services", []) or [], 1):
+        if isinstance(item, str):
+            name = item.strip()
+            if not name:
+                continue
+            identifier = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
+            item = {"id": "external-" + (identifier or str(index)), "name": name}
         if not isinstance(item, dict) or not item.get("id") or not item.get("name"):
             raise RuntimeError("Every external actor or service requires id and name")
         item = dict(item)
@@ -311,4 +318,3 @@ def validate_output(path: Path, fmt: str) -> None:
             raise RuntimeError(f"Generated {path.name} is not a valid SVG") from exc
     else:
         raise ValueError(f"Unsupported output format: {fmt}")
-
