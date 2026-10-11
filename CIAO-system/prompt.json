@@ -13,12 +13,12 @@
     "Write each section in a way that can be understood by both technical and non-technical stakeholders.",
     "Focus on clarity and correctness and completeness.",
     "Reflect practical decisions, actual dependencies, and architectural choices evident in the implementation.",
-    "Absolutely do not skip any part of the code, is it crucial that when you produce a list of containers, components, entities or other you write the complete list, withoput skipping anything "
+    "Prioritize concise coverage of the architecture-critical components and end-to-end flows. Group related files by responsibility instead of listing every file. State what is summarized or unknown when the supplied evidence or response budget cannot support a complete inventory."
   ],
-  "code_analysis": "Examine every line of source code to understand functionality, components, responsibilities,  dependencies, deployment characteristics and interactions; make sure documentation reflects the real implementation. Use this understanding to generate precise documentation aligned with the ISO/IEC/IEEE 42010, SEI, C4, arc42 structure." 
+  "code_analysis": "Analyze only the source evidence supplied to the model. Prioritize the README, dependency manifests, entry points, API routes, processing and data flows, tests, and deployment artifacts. Ground claims in evidence, group related files, and do not claim that every line or file was analyzed when input was truncated or excluded."
 },
 
-  
+
   "md_safety": [
     "Do not embed HTML; produce Markdown only.",
     "Use stable, unique filenames and captions; keep them consistent with section titles.",
@@ -71,7 +71,7 @@
       }
     },
   "2.1": {
-    
+
     "title": "Architectural Context – Use Case Diagram",
     "goal" : "Complete and accurate PlantUML Use Case diagram, no allucination",
     "description": "Use case diagram for the system context, grounded only on repository evidence.",
@@ -163,7 +163,7 @@
       "validation": {
         "min_components": 2
       }
-      
+
     }
   },
 
@@ -265,7 +265,7 @@
           "Aggregation (o--) if B is passed-in/owned elsewhere; if unclear, use plain association (--)."
         ]
       }
-      
+
     }
   },
 

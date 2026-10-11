@@ -1,48 +1,43 @@
-# CIAO-Code-In-Architecture-Out
+# CIAO — Code In, Architecture Out
 
-CIAO is a command‑line tool that flattens a code repository with Repomix and then uses the OpenAI API to generate Markdown documentation asynchronously.
+CIAO is a command-line tool that uses Repomix to collect a repository snapshot and Ollama to generate an arc42-style Markdown report with PlantUML diagram definitions. It uses the local Ollama service; no OpenAI API key is required.
 
-## Prerequisites
+## Requirements
 
-- Python 3.11 or later installed and available.
-- An OpenAI API key set in the environment variable `OPENAI_API_KEY`.
-- The `repomix` CLI installed and available on your PATH.
+- Python 3.11 or newer
+- Node.js and npm, for the Repomix command-line tool
+- Ollama, with enough memory for the selected model
 
-## Installation
+## Setup on Windows PowerShell
 
-1. Clone the repository
-2. Open terminal inside the repository folder
-3. Install Python dependencies: `pip install argparse asyncio aiofiles tiktoken openai repomix`
+From the repository root:
 
+```powershell
+cd .\CIAO-system
+python -m pip install -r requirements.txt
+npm install --global repomix
+ollama pull llama3.2:3b
+```
 
+Make sure Ollama is running. To use the recommended small default model and analyze a repository:
 
-## Usage
+```powershell
+$env:OLLAMA_MODEL = "llama3.2:3b"
+python .\main.py "https://github.com/owner/repository"
+```
 
-1. Set your OpenAI API key, in the terminal: `export OPENAI_API_KEY="Your API Key"`
-2. Set repomix.config.json file to include exclude programming languages
-3. Run CIAO on a repository, in the terminal: `python main.py <github repo link or local repo>`
+A local repository path can be supplied instead of a GitHub URL. The generated report is written to `CIAO-system/arc42_documentation.txt`.
 
+## Ollama settings
 
-When the run completes successfully, CIAO will:
+CIAO defaults to `llama3.2:3b`, an 8,192-token context, and at most 1,536 generated tokens per section. These limits are configurable before starting CIAO:
 
-- Use Repomix (and `repomix.config.json`) to flatten the repository into `full_code.txt`.
-- Load documentation templates and guidelines from `prompt.json`.
-- Generate documentation sections in parallel and write the final Markdown document to `documentation.txt` in the CIAO project directory.
+```powershell
+$env:OLLAMA_HOST = "http://localhost:11434"
+$env:OLLAMA_MODEL = "llama3.2:3b"
+$env:OLLAMA_CONTEXT_SIZE = "8192"
+$env:OLLAMA_INPUT_TOKEN_LIMIT = "6000"
+$env:OLLAMA_MAX_OUTPUT_TOKENS = "1536"
+```
 
-
-## Data Folder 
-As supplemental material the data folder contains:
-
-- Repo folder, containing all the generated markdown documentations with the images.
-- A copy of the survey.
-- Results of the survey.
-
-
-
-
-
-
-
-
-
-
+The prompt asks CIAO to group related files and prioritize architecture-critical components and flows. It should state limitations when the available evidence or response budget cannot support a complete inventory.

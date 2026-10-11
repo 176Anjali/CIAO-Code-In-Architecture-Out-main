@@ -1,0 +1,3 @@
+aiofiles
+tiktoken
+ollama
