@@ -38,6 +38,7 @@ def main() -> None:
     service = AnalysisService()
     source = Path(args.repo).resolve()
     output_dir = Path(args.output_dir).resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
     commit_message = subprocess.run(
         ["git", "-C", str(source), "log", "-1", "--format=%B"],
         check=True,
