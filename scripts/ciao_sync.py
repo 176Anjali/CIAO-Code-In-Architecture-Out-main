@@ -38,13 +38,26 @@ def main() -> None:
     service = AnalysisService()
     source = Path(args.repo).resolve()
     output_dir = Path(args.output_dir).resolve()
-    output_dir.mkdir(parents=True, exist_ok=True)
+    if args.commit_sha != "unknown":
+        actual_sha = subprocess.run(
+            ["git", "-C", str(source), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if actual_sha != args.commit_sha:
+            raise RuntimeError(
+                f"Refusing to analyze {actual_sha}; triggering commit is {args.commit_sha}"
+            )
     commit_message = subprocess.run(
         ["git", "-C", str(source), "log", "-1", "--format=%B"],
         check=True,
         capture_output=True,
         text=True,
     ).stdout.strip()
+    if "[ciao-generated]" in commit_message:
+        print(json.dumps({"status": "skipped", "reason": "loop-guard"}, indent=2))
+        return
     remote = subprocess.run(
         ["git", "-C", str(source), "config", "--get", "remote.origin.url"],
         check=False,
@@ -86,9 +99,11 @@ def main() -> None:
         raise
     manifest = {
         "tool": "CIAO",
+        "source_repository": remote,
+        "target_repository": str(source),
+        "branch": args.branch,
         "commit_sha": args.commit_sha,
         "commit_message": commit_message,
-        "branch": args.branch,
         "generated_at": generated_at,
         "sync_at": generated_at,
         "document": root_document.name,

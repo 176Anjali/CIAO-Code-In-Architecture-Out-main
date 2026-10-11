@@ -9,6 +9,10 @@ class PipelineName(str, Enum):
     GRAPH_VALIDATION = "graph_validation"
     REPOMIX_OLLAMA = "repomix_ollama"
 
+    @classmethod
+    def default(cls) -> "PipelineName":
+        return cls.REPOMIX_OLLAMA
+
 
 @dataclass
 class ArtifactMetadata:

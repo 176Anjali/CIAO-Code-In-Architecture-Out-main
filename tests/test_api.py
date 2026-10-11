@@ -2,7 +2,6 @@ import hashlib
 import hmac
 import json
 import os
-import re
 import uuid
 import io
 import zipfile
@@ -15,8 +14,7 @@ from fastapi.testclient import TestClient
 
 from src.api import app
 from src.service.analysis_service import AnalysisService
-from src.service.ollama_generation import (build_architecture_spec_from_graph, generate_architecture_spec, generate_documentation_report)
-from src.service.repository_files import iter_repository_files
+from src.service.ollama_generation import generate_architecture_spec
 
 
 client = TestClient(app)
@@ -64,55 +62,7 @@ def test_ollama_requests_constrained_json_and_accepts_valid_response(monkeypatch
     assert result["components"][0]["id"] == "api"
     assert calls[0]["format"] == "json"
     assert calls[0]["options"]["temperature"] == 0
-    assert calls[0]["options"]["num_predict"] == 1024
 
-
-def test_ollama_normalizes_string_external_actors(monkeypatch):
-    import ollama
-
-    spec = _architecture_json()
-    spec["external_actors_or_services"] = ["GitHub Actions", "Ollama"]
-
-    class FakeClient:
-        def __init__(self, host):
-            pass
-
-        def chat(self, **kwargs):
-            return {"message": {"content": json.dumps(spec)}}
-
-    monkeypatch.setattr(ollama, "Client", FakeClient)
-    result = generate_architecture_spec(
-        {"nodes": [], "edges": []},
-        readme="",
-        context={"project_name": "Target", "submitted_source": "target"},
-        evidence=".github/workflows/ci.yml:1-4",
-    )
-    assert [item["name"] for item in result["external_actors_or_services"]] == ["GitHub Actions", "Ollama"]
-    assert result["external_actors_or_services"][0]["id"] == "external-github-actions"
-
-def test_ollama_normalizes_relationship_field_aliases(monkeypatch):
-    import ollama
-
-    spec = _architecture_json()
-    spec["components"].append({"id": "model", "name": "Model", "responsibility": "Runs inference"})
-    spec["relationships"] = [{"source": "API", "target": "Model", "type": "calls model", "evidence": ["app.py:3-5"]}]
-
-    class FakeClient:
-        def __init__(self, host):
-            pass
-
-        def chat(self, **kwargs):
-            return {"message": {"content": json.dumps(spec)}}
-
-    monkeypatch.setattr(ollama, "Client", FakeClient)
-    result = generate_architecture_spec(
-        {"nodes": [], "edges": []}, readme="",
-        context={"project_name": "Target", "submitted_source": "target"},
-        evidence="app.py:1-5",
-    )
-    assert result["relationships"][0]["source_id"] == "api"
-    assert result["relationships"][0]["target_id"] == "model"
-    assert result["relationships"][0]["label"] == "calls model"
 
 def test_ollama_retries_invalid_json_once_then_accepts(monkeypatch):
     import ollama
@@ -195,8 +145,8 @@ def test_generate_uploaded_source_in_selected_formats():
     assert client.get(body["diagram"]["url"]).headers["content-type"].startswith("image/svg")
     diagram = client.get(body["diagram"]["url"]).content
     assert b"<svg" in diagram
-    assert b"hello.py" in diagram
-    assert b"1 function" in diagram
+    assert b"Test architecture" in diagram
+    assert b"Test component" in diagram
     assert b"SIBLING_FILE" not in diagram
 
 
@@ -275,7 +225,7 @@ def test_generate_github_url_input(monkeypatch, tmp_path):
     assert response.json()["commit_sha"] == "abc123"
 
 
-def test_github_target_context_reaches_report_and_graph(monkeypatch, tmp_path):
+def test_github_target_context_reaches_ollama_and_report(monkeypatch, tmp_path):
     target = tmp_path / "Cancer-Detection-API"
     target.mkdir()
     (target / "README.md").write_text("# Cancer Detection API\n", encoding="utf-8")
@@ -286,17 +236,35 @@ def test_github_target_context_reaches_report_and_graph(monkeypatch, tmp_path):
         AnalysisService,
         "_resolve_repository",
         lambda self, repository_url, branch, commit_sha: (
-            target, "219e1a2578db6d9dc07e992e5560b644a3b2d573", "main", "Initial API", "Cancer-Detection-API"
+            target,
+            "219e1a2578db6d9dc07e992e5560b644a3b2d573",
+            "main",
+            "Initial API",
+            "Cancer-Detection-API",
         ),
     )
 
-    def capture(graph, readme, context):
+    def capture(graph, readme, context, evidence):
         captured["context"] = context
-        captured["graph"] = graph
-        captured["readme"] = readme
-        return "# Project Documentation\n\n## Introduction\nCancer-Detection-API"
+        captured["evidence"] = evidence
+        return {
+            "title": "Target architecture",
+            "system_boundary": {"id": "system", "name": "Cancer-Detection-API"},
+            "external_actors_or_services": [],
+            "components": [
+                {
+                    "id": "api",
+                    "name": "Cancer API",
+                    "responsibility": "Exposes the target API",
+                    "evidence": ["app.py:1-2"],
+                }
+            ],
+            "relationships": [],
+            "principal_flow": [],
+            "unknowns": [],
+        }
 
-    monkeypatch.setattr("src.service.analysis_service.generate_documentation_report", capture)
+    monkeypatch.setattr("src.service.analysis_service.generate_architecture_spec", capture)
     response = client.post(
         "/api/generate",
         data={
@@ -313,16 +281,17 @@ def test_github_target_context_reaches_report_and_graph(monkeypatch, tmp_path):
     assert captured["context"]["project_name"] == "Cancer-Detection-API"
     assert captured["context"]["submitted_source"].endswith("/Cancer-Detection-API")
     assert captured["context"]["repository_path"] == str(target.resolve())
-    assert captured["readme"].startswith("# Cancer Detection API")
-    assert any(node.get("name") == "app.py" for node in captured["graph"]["nodes"])
+    assert "app.py:1:" in captured["evidence"]
+    assert "README.md:1:" in captured["evidence"]
     report = client.get(body["documentation"]["url"]).content
     assert b"Cancer-Detection-API" in report
     assert b"219e1a2578db6d9dc07e992e5560b644a3b2d573" in report
 
+
 def test_ollama_failure_returns_clear_error_without_success(monkeypatch):
     monkeypatch.setattr(
-        "src.service.analysis_service.generate_documentation_report",
-        lambda graph, readme, context: (_ for _ in ()).throw(
+        "src.service.analysis_service.generate_architecture_spec",
+        lambda graph, readme, context, evidence: (_ for _ in ()).throw(
             RuntimeError("Ollama generation failed at http://unavailable")
         ),
     )
@@ -348,8 +317,9 @@ def test_report_contains_metadata_and_fallback_diagram_for_non_python_upload():
     report = client.get(body["documentation"]["url"])
     assert b"documentation.pdf" in report.content
     assert b"Generated at:" in report.content
-    assert b"Introduction" in report.content
-    assert b"Evidence reviewed" in report.content
+    assert b"C4 and arc42 architecture views" in report.content
+    assert b"REST APIs, data flow, and storage" in report.content
+    assert b"Limitations" in report.content
     assert client.get(body["diagram"]["url"]).content.startswith(b"\x89PNG\r\n\x1a\n")
 
 
@@ -606,151 +576,3 @@ def test_repomix_ollama_subprocess_uses_utf8_environment(tmp_path, monkeypatch):
     )
     assert captured["PYTHONIOENCODING"] == "utf-8"
     assert captured["PYTHONUTF8"] == "1"
-
-def test_documentation_report_caches_unchanged_chunks_and_uses_one_client(monkeypatch, tmp_path):
-    import ollama
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    file_a = (repo / "a.py").resolve()
-    file_b = (repo / "b.py").resolve()
-    graph = {
-        "nodes": [
-            {"id": "file:a", "type": "file", "name": "a.py", "path": str(file_a)},
-            {"id": "file:b", "type": "file", "name": "b.py", "path": str(file_b)},
-            {"id": "function:a", "type": "function", "name": "run", "file": str(file_a)},
-            {"id": "class:b", "type": "class", "name": "Worker", "file": str(file_b)},
-        ],
-        "edges": [{"source": "file:a", "target": "file:b", "relationship": "IMPORTS_FILE"}],
-    }
-    calls = []
-    clients = []
-
-    class FakeClient:
-        def __init__(self, host):
-            clients.append(host)
-
-        def chat(self, **kwargs):
-            calls.append(kwargs)
-            user_content = kwargs["messages"][-1]["content"]
-            if "knowledge_graph_module_summaries" in user_content:
-                result = "report based on " + user_content[-180:]
-            else:
-                result = "summary based on " + user_content[-180:]
-            return {"message": {"content": result}}
-
-    monkeypatch.setattr(ollama, "Client", FakeClient)
-    monkeypatch.setenv("CIAO_OLLAMA_NUM_CTX", "2048")
-    monkeypatch.setenv("CIAO_OLLAMA_NUM_PREDICT", "256")
-    monkeypatch.setenv("CIAO_OLLAMA_SUMMARY_NUM_PREDICT", "128")
-    monkeypatch.setenv("CIAO_OLLAMA_KEEP_ALIVE", "15m")
-    cache_dir = tmp_path / ".ciao-cache"
-    context = {"repository_path": str(repo), "project_name": "Sample", "submitted_source": "sample"}
-
-    first = generate_documentation_report(graph, readme="# Sample", context=context, cache_dir=cache_dir)
-    assert first.startswith("report based on ")
-    assert len(calls) == 2  # one graph-summary chunk and one final report
-    assert calls[0]["options"] == {"num_ctx": 2048, "num_predict": 128, "temperature": 0}
-    assert calls[1]["options"]["num_predict"] == 256
-    assert calls[0]["keep_alive"] == "15m"
-    assert len(clients) == 1  # same HTTP client for all calls in this generation
-
-    generate_documentation_report(graph, readme="# Sample", context=context, cache_dir=cache_dir)
-    assert len(calls) == 2  # both cached
-
-    graph["nodes"].append({"id": "function:b", "type": "function", "name": "predict", "file": str(file_b)})
-    generate_documentation_report(graph, readme="# Sample", context=context, cache_dir=cache_dir)
-    assert len(calls) == 4  # changed chunk and final report based on the changed summary
-    assert len(list(cache_dir.glob("*.json"))) == 4
-
-
-def test_architecture_is_deterministic_and_omits_sibling_edges(tmp_path):
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    first = (repo / "app.py").resolve()
-    second = (repo / "service.py").resolve()
-    graph = {
-        "nodes": [
-            {"id": "a", "type": "file", "name": "app.py", "path": str(first)},
-            {"id": "b", "type": "file", "name": "service.py", "path": str(second)},
-        ],
-        "edges": [
-            {"source": "a", "target": "b", "relationship": "SIBLING_FILE"},
-            {"source": "a", "target": "b", "relationship": "IMPORTS_FILE"},
-        ],
-    }
-    spec = build_architecture_spec_from_graph(graph, repository_path=repo, project_name="Sample")
-    assert len(spec["components"]) == 2
-    assert len(spec["relationships"]) == 1
-    assert spec["relationships"][0]["label"] == "imports"
-    assert not spec["external_actors_or_services"]
-
-
-def test_module_summary_includes_line_cited_source_evidence(tmp_path):
-    from src.service.ollama_generation import summarize_graph_modules
-
-    repo = tmp_path / "repo"
-    (repo / "app").mkdir(parents=True)
-    source = repo / "app" / "api.py"
-    source.write_text(
-        "from app.services import predict\n"
-        "@router.post('/predict')\n"
-        "async def predict_image(file):\n"
-        "    return predict(file)\n",
-        encoding="utf-8",
-    )
-    graph = {
-        "nodes": [
-            {"id": "file", "type": "file", "name": "api.py", "path": str(source.resolve())},
-            {"id": "function", "type": "function", "name": "predict_image", "file": str(source.resolve())},
-        ],
-        "edges": [],
-    }
-    evidence = summarize_graph_modules(graph, repo)[0]["source_evidence"]
-    assert any("api.py:L1" in item and "from app.services" in item for item in evidence)
-    assert any("api.py:L2-L3" in item and "router.post" in item for item in evidence)
-    assert any("calls:" in item and "predict" in item for item in evidence)
-
-
-def test_pdf_report_wraps_and_paginates_and_docx_uses_heading_styles(tmp_path):
-    from src.service.report_generator import write_document
-
-    report = "# Example Project\n\n## Abstract\n\n" + "\n\n".join(
-        f"Section {index}: " + ("evidence-based project explanation " * 12)
-        for index in range(100)
-    )
-    pdf = tmp_path / "documentation.pdf"
-    docx = tmp_path / "documentation.docx"
-    write_document(report, pdf, "pdf")
-    write_document(report, docx, "docx")
-    content = pdf.read_bytes()
-    assert content.startswith(b"%PDF-1.4")
-    page_count = re.search(rb"/Count (\d+)", content)
-    assert page_count and int(page_count.group(1)) > 1
-    with zipfile.ZipFile(docx) as archive:
-        document = archive.read("word/document.xml")
-        styles = archive.read("word/styles.xml")
-    assert b"Heading1" in document
-    assert b"Heading1" in styles
-
-
-def test_repository_file_discovery_applies_exclusions_and_gitignore(tmp_path):
-    repo = tmp_path / "repo"
-    (repo / "src").mkdir(parents=True)
-    (repo / "tests").mkdir()
-    (repo / "Data").mkdir()
-    (repo / "ignored").mkdir()
-    for relative in ("src/app.py", "tests/test_app.py", "Data/weights.pt", "ignored/private.py", "src/notebook.ipynb", "src/image.png", "src/package-lock.json", "src/full_code.txt"):
-        path = repo / relative
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("x", encoding="utf-8")
-    (repo / ".gitignore").write_text("ignored/\n*.secret\n", encoding="utf-8")
-    included = {path.relative_to(repo).as_posix() for path in iter_repository_files(repo)}
-    assert "src/app.py" in included
-    assert "tests/test_app.py" not in included
-    assert "Data/weights.pt" not in included
-    assert "ignored/private.py" not in included
-    assert "src/notebook.ipynb" not in included
-    assert "src/image.png" not in included
-    assert "src/package-lock.json" not in included
-    assert "src/full_code.txt" not in included

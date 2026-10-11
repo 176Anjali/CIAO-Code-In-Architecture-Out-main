@@ -6,11 +6,10 @@ import hashlib
 import os
 import subprocess
 import sys
-import uuid
 import zipfile
 import shutil
 import tempfile
-import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import asdict, dataclass
@@ -22,12 +21,7 @@ from src.pipeline_contract import ArtifactMetadata, PipelineName
 from src.service.github_sync import GitHubSync
 from src.service.state_store import StateStore
 from src.service.report_generator import architecture_text, write_diagram, write_document
-from src.service.ollama_generation import (
-build_architecture_spec_from_graph,
-generate_documentation_report,
-validate_output,
-)
-from src.service.repository_files import iter_repository_files
+from src.service.ollama_generation import generate_architecture_spec, validate_output
 
 
 @dataclass(frozen=True)
@@ -184,65 +178,73 @@ class AnalysisService:
                 sync_at=metadata.get("sync_at"),
             )
         self._validate_analysis_context(context, source_path)
-        analysis_started = time.perf_counter()
-        graph_started = time.perf_counter()
-        graph_builder = RepositoryKnowledgeGraph(str(source_path))
-        graph_builder.build()
-        graph = graph_builder.to_dict()
-        if not graph.get("nodes"):
-            graph = self._fallback_file_graph(source_path)
-        print(f"CIAO_TIMING stage=analysis.graph seconds={time.perf_counter()-graph_started:.3f} nodes={len(graph.get('nodes', []))} edges={len(graph.get('edges', []))}")
-        graph_path = output_dir / "graph" / "repository_graph.json"
-        graph_path.parent.mkdir(parents=True, exist_ok=True)
-        graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
-        summary = self._summarize_graph(graph)
-        readme = self._read_readme(source_path, context.file_manifest)
-        architecture_spec = build_architecture_spec_from_graph(
-            graph, repository_path=source_path, project_name=context.project_name
-        )
-        print(f"CIAO_TIMING stage=analysis.total seconds={time.perf_counter()-analysis_started:.3f} files={len(context.file_manifest)}")
-        report_started = time.perf_counter()
+        staging_dir = output_dir.parent / f".{output_dir.name}.staging-{uuid.uuid4().hex}"
         try:
-            ollama_description = generate_documentation_report(
-                graph, readme=readme, context=asdict(context),
+            staging_dir.mkdir(parents=True, exist_ok=False)
+            graph_builder = RepositoryKnowledgeGraph(str(source_path))
+            graph_builder.build()
+            graph = graph_builder.to_dict()
+            if not graph.get("nodes"):
+                graph = self._fallback_file_graph(source_path)
+            graph_path = staging_dir / "graph" / "repository_graph.json"
+            graph_path.parent.mkdir(parents=True, exist_ok=True)
+            graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
+            summary = self._summarize_graph(graph)
+            prompt_summary, prompt_artifacts = self._run_repomix_ollama(
+                source_path,
+                staging_dir,
+                require_ollama=require_ollama,
             )
-        except RuntimeError:
-            if require_ollama:
-                raise
-            ollama_description = "Ollama generation was skipped; only static repository evidence is available."
-        print(f"CIAO_TIMING stage=documentation.prepare seconds={time.perf_counter()-report_started:.3f}")
-        document_path = output_dir / f"documentation.{document_format}"
-        diagram_path = output_dir / f"architecture.{image_format}"
-        report_metadata = dict(metadata or {})
-        report_metadata.setdefault("output_filename", document_path.name)
-        report_metadata.setdefault("output_format", document_format)
-        report_metadata.setdefault("generated_at", datetime.now().astimezone().isoformat())
-        report_metadata.setdefault("source_name", source_path.name)
-        report_metadata.setdefault("branch", "Unavailable")
-        report_metadata.setdefault("commit_message", "Unavailable")
-        report_metadata.setdefault("commit_sha", commit_sha)
-        report_metadata.update({
-            "source_repository": context.submitted_source,
-            "project_name": context.project_name,
-            "repository_path": context.repository_path,
-            "file_manifest": context.file_manifest,
-        })
-        report_text = architecture_text(
-            source_path,
-            commit_sha,
-            graph,
-            readme,
-            report_metadata,
-            ollama_description,
-            context=asdict(context),
-        )
-        render_started = time.perf_counter()
-        write_document(report_text, document_path, document_format)
-        print(f"CIAO_TIMING stage=render.documentation seconds={time.perf_counter()-render_started:.3f}")
-        render_started = time.perf_counter()
-        write_diagram(architecture_spec, diagram_path, image_format)
-        print(f"CIAO_TIMING stage=render.architecture seconds={time.perf_counter()-render_started:.3f}")
-        return summary, document_path, diagram_path
+            evidence = self._collect_target_evidence(source_path, context.file_manifest)
+            architecture_spec = generate_architecture_spec(
+                graph,
+                readme=self._read_readme(source_path),
+                context=asdict(context),
+                evidence=evidence,
+            )
+            ollama_description = json.dumps(architecture_spec, indent=2, ensure_ascii=False)
+            document_path = staging_dir / f"documentation.{document_format}"
+            diagram_path = staging_dir / f"architecture.{image_format}"
+            report_metadata = dict(metadata or {})
+            report_metadata.setdefault("output_filename", document_path.name)
+            report_metadata.setdefault("output_format", document_format)
+            report_metadata.setdefault("generated_at", datetime.now().astimezone().isoformat())
+            report_metadata.setdefault("source_name", source_path.name)
+            report_metadata.setdefault("branch", "Unavailable")
+            report_metadata.setdefault("commit_message", "Unavailable")
+            report_metadata.setdefault("commit_sha", commit_sha)
+            report_metadata.update({
+                "source_repository": context.submitted_source,
+                "project_name": context.project_name,
+                "repository_path": context.repository_path,
+                "file_manifest": context.file_manifest,
+            })
+            report_text = architecture_text(
+                source_path,
+                commit_sha,
+                graph,
+                self._read_readme(source_path),
+                report_metadata,
+                ollama_description + "\n\nPrompt-driven arc42 output:\n" + prompt_summary.get("prompt_documentation", ""),
+                context=asdict(context),
+            )
+            write_document(report_text, document_path, document_format)
+            write_diagram(architecture_spec, diagram_path, image_format)
+            validate_output(document_path, document_format)
+            validate_output(diagram_path, image_format)
+            generated = [path for path in staging_dir.rglob("*") if path.is_file()]
+            for path in generated:
+                relative = path.relative_to(staging_dir)
+                target = output_dir / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(path, target)
+            final_document = output_dir / document_path.name
+            final_diagram = output_dir / diagram_path.name
+            return summary | prompt_summary, final_document, final_diagram
+        except Exception:
+            raise
+        finally:
+            shutil.rmtree(staging_dir, ignore_errors=True)
 
     def _build_analysis_context(
         self,
@@ -281,7 +283,14 @@ class AnalysisService:
             return []
         if source_path.is_file():
             return [source_path.name]
-        return [path.relative_to(root).as_posix() for path in iter_repository_files(root, max_file_bytes=2_000_000)][:500]
+        return sorted(
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*")
+            if path.is_file()
+            and ".git" not in path.parts
+            and not path.is_symlink()
+            and path.stat().st_size <= 2_000_000
+        )[:500]
 
     def _collect_target_evidence(self, source_path: Path, manifest: List[str]) -> str:
         root = source_path if source_path.is_dir() else source_path.parent
@@ -322,7 +331,10 @@ class AnalysisService:
 
     def _fallback_file_graph(self, source_path: Path) -> Dict[str, Any]:
         root = source_path if source_path.is_dir() else source_path.parent
-        files = iter_repository_files(root, max_file_bytes=2_000_000)[:120]
+        files = [
+            path for path in root.rglob("*")
+            if path.is_file() and ".git" not in path.parts and path.stat().st_size <= 2_000_000
+        ][:120]
         nodes = []
         for path in files:
             nodes.append({
@@ -331,7 +343,10 @@ class AnalysisService:
                 "name": path.name,
                 "path": str(path.resolve()),
             })
-        return {"nodes": nodes, "edges": []}
+        edges = []
+        for left, right in zip(nodes, nodes[1:]):
+            edges.append({"source": left["id"], "target": right["id"], "relationship": "SIBLING_FILE"})
+        return {"nodes": nodes, "edges": edges}
 
     def generated_file(self, project_id: str, kind: str) -> Path:
         base = self.output_dir / project_id
@@ -356,13 +371,12 @@ class AnalysisService:
         path.write_bytes(data)
         return root
 
-    def _read_readme(self, source_path: Path, manifest: Optional[List[str]] = None) -> str:
+    def _read_readme(self, source_path: Path) -> str:
         if source_path.is_file():
             return ""
-        allowed = set(manifest) if manifest is not None else None
         for name in ("README.md", "README", "README.txt"):
             candidate = source_path / name
-            if candidate.exists() and (allowed is None or name in allowed):
+            if candidate.exists():
                 return candidate.read_text(encoding="utf-8", errors="replace")
         return ""
 
@@ -377,7 +391,7 @@ class AnalysisService:
     ) -> Dict[str, Any]:
         job_id = f"job-{uuid.uuid4().hex}"
         self._save_job(job_id, "running", project_id=project_id, pipeline=pipeline)
-        pipeline_name = PipelineName(pipeline or PipelineName.GRAPH_VALIDATION.value)
+        pipeline_name = PipelineName(pipeline or PipelineName.default().value)
         try:
             resolved = self._resolve_repository(
                 repository_reference, branch=branch, commit_sha=commit_sha
@@ -598,6 +612,8 @@ class AnalysisService:
         self,
         repository_path: Path,
         project_output_dir: Path,
+        *,
+        require_ollama: bool = True,
     ) -> tuple[Dict[str, Any], List[ArtifactMetadata]]:
         source_path = project_output_dir / "source" / "full_code.txt"
         documentation_path = project_output_dir / "docs" / "arc42_documentation.txt"
@@ -638,6 +654,12 @@ class AnalysisService:
 
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "").strip()
+            if not require_ollama:
+                return {
+                    "prompt_documentation": "",
+                    "source_bytes": source_path.stat().st_size if source_path.exists() else 0,
+                    "documentation_bytes": 0,
+                }, []
             raise RuntimeError(
                 f"Repomix/Ollama pipeline failed with exit code "
                 f"{completed.returncode}: {detail}"
@@ -649,6 +671,12 @@ class AnalysisService:
             if not path.exists()
         ]
         if missing:
+            if not require_ollama:
+                return {
+                    "prompt_documentation": "",
+                    "source_bytes": source_path.stat().st_size if source_path.exists() else 0,
+                    "documentation_bytes": 0,
+                }, []
             raise RuntimeError(
                 "Repomix/Ollama pipeline completed without generating: "
                 + ", ".join(missing)
@@ -676,6 +704,9 @@ class AnalysisService:
         return {
             "source_bytes": source_path.stat().st_size,
             "documentation_bytes": documentation_path.stat().st_size,
+            "prompt_documentation": documentation_path.read_text(
+                encoding="utf-8", errors="replace"
+            ),
         }, artifacts
 
     def _summarize_graph(self, graph: Dict[str, Any]) -> Dict[str, Any]:
