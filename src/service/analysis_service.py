@@ -10,6 +10,7 @@ import uuid
 import zipfile
 import shutil
 import tempfile
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from dataclasses import asdict, dataclass
@@ -21,7 +22,12 @@ from src.pipeline_contract import ArtifactMetadata, PipelineName
 from src.service.github_sync import GitHubSync
 from src.service.state_store import StateStore
 from src.service.report_generator import architecture_text, write_diagram, write_document
-from src.service.ollama_generation import generate_architecture_spec, validate_output
+from src.service.ollama_generation import (
+build_architecture_spec_from_graph,
+generate_documentation_report,
+validate_output,
+)
+from src.service.repository_files import iter_repository_files
 
 
 @dataclass(frozen=True)
@@ -178,37 +184,33 @@ class AnalysisService:
                 sync_at=metadata.get("sync_at"),
             )
         self._validate_analysis_context(context, source_path)
+        analysis_started = time.perf_counter()
+        graph_started = time.perf_counter()
         graph_builder = RepositoryKnowledgeGraph(str(source_path))
         graph_builder.build()
         graph = graph_builder.to_dict()
         if not graph.get("nodes"):
             graph = self._fallback_file_graph(source_path)
+        print(f"CIAO_TIMING stage=analysis.graph seconds={time.perf_counter()-graph_started:.3f} nodes={len(graph.get('nodes', []))} edges={len(graph.get('edges', []))}")
         graph_path = output_dir / "graph" / "repository_graph.json"
         graph_path.parent.mkdir(parents=True, exist_ok=True)
         graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
         summary = self._summarize_graph(graph)
+        readme = self._read_readme(source_path, context.file_manifest)
+        architecture_spec = build_architecture_spec_from_graph(
+            graph, repository_path=source_path, project_name=context.project_name
+        )
+        print(f"CIAO_TIMING stage=analysis.total seconds={time.perf_counter()-analysis_started:.3f} files={len(context.file_manifest)}")
+        report_started = time.perf_counter()
         try:
-            evidence = self._collect_target_evidence(source_path, context.file_manifest)
-            architecture_spec = generate_architecture_spec(
-                graph,
-                readme=self._read_readme(source_path),
-                context=asdict(context),
-                evidence=evidence,
+            ollama_description = generate_documentation_report(
+                graph, readme=readme, context=asdict(context),
             )
-            ollama_description = json.dumps(architecture_spec, indent=2, ensure_ascii=False)
         except RuntimeError:
             if require_ollama:
                 raise
-            architecture_spec = {
-                "title": "Architecture unavailable",
-                "system_boundary": {"id": "system", "name": context.project_name},
-                "external_actors_or_services": [],
-                "components": [],
-                "relationships": [],
-                "principal_flow": [],
-                "unknowns": ["Ollama architecture specification was unavailable."],
-            }
-            ollama_description = "Ollama generation was skipped for this legacy pipeline."
+            ollama_description = "Ollama generation was skipped; only static repository evidence is available."
+        print(f"CIAO_TIMING stage=documentation.prepare seconds={time.perf_counter()-report_started:.3f}")
         document_path = output_dir / f"documentation.{document_format}"
         diagram_path = output_dir / f"architecture.{image_format}"
         report_metadata = dict(metadata or {})
@@ -229,13 +231,17 @@ class AnalysisService:
             source_path,
             commit_sha,
             graph,
-            self._read_readme(source_path),
+            readme,
             report_metadata,
             ollama_description,
             context=asdict(context),
         )
+        render_started = time.perf_counter()
         write_document(report_text, document_path, document_format)
+        print(f"CIAO_TIMING stage=render.documentation seconds={time.perf_counter()-render_started:.3f}")
+        render_started = time.perf_counter()
         write_diagram(architecture_spec, diagram_path, image_format)
+        print(f"CIAO_TIMING stage=render.architecture seconds={time.perf_counter()-render_started:.3f}")
         return summary, document_path, diagram_path
 
     def _build_analysis_context(
@@ -275,14 +281,7 @@ class AnalysisService:
             return []
         if source_path.is_file():
             return [source_path.name]
-        return sorted(
-            path.relative_to(root).as_posix()
-            for path in root.rglob("*")
-            if path.is_file()
-            and ".git" not in path.parts
-            and not path.is_symlink()
-            and path.stat().st_size <= 2_000_000
-        )[:500]
+        return [path.relative_to(root).as_posix() for path in iter_repository_files(root, max_file_bytes=2_000_000)][:500]
 
     def _collect_target_evidence(self, source_path: Path, manifest: List[str]) -> str:
         root = source_path if source_path.is_dir() else source_path.parent
@@ -323,10 +322,7 @@ class AnalysisService:
 
     def _fallback_file_graph(self, source_path: Path) -> Dict[str, Any]:
         root = source_path if source_path.is_dir() else source_path.parent
-        files = [
-            path for path in root.rglob("*")
-            if path.is_file() and ".git" not in path.parts and path.stat().st_size <= 2_000_000
-        ][:120]
+        files = iter_repository_files(root, max_file_bytes=2_000_000)[:120]
         nodes = []
         for path in files:
             nodes.append({
@@ -335,10 +331,7 @@ class AnalysisService:
                 "name": path.name,
                 "path": str(path.resolve()),
             })
-        edges = []
-        for left, right in zip(nodes, nodes[1:]):
-            edges.append({"source": left["id"], "target": right["id"], "relationship": "SIBLING_FILE"})
-        return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": []}
 
     def generated_file(self, project_id: str, kind: str) -> Path:
         base = self.output_dir / project_id
@@ -363,12 +356,13 @@ class AnalysisService:
         path.write_bytes(data)
         return root
 
-    def _read_readme(self, source_path: Path) -> str:
+    def _read_readme(self, source_path: Path, manifest: Optional[List[str]] = None) -> str:
         if source_path.is_file():
             return ""
+        allowed = set(manifest) if manifest is not None else None
         for name in ("README.md", "README", "README.txt"):
             candidate = source_path / name
-            if candidate.exists():
+            if candidate.exists() and (allowed is None or name in allowed):
                 return candidate.read_text(encoding="utf-8", errors="replace")
         return ""
 

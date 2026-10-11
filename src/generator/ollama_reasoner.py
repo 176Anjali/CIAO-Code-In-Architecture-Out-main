@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from pathlib import Path
 
 import ollama
@@ -31,6 +32,8 @@ class OllamaArchitectureReasoner:
             "llama3.2:3b"
         )
 
+        self.host = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+        self.client = ollama.Client(host=self.host)
         self.graph_data = None
 
     def load_graph(self):
@@ -158,7 +161,8 @@ Mention anything that cannot be determined from the graph.
         print(f"\nModel: {self.model}")
         print(f"Graph: {self.graph_path}")
 
-        response = ollama.chat(
+        started = time.perf_counter()
+        response = self.client.chat(
             model=self.model,
             messages=[
                 {
@@ -175,9 +179,16 @@ Mention anything that cannot be determined from the graph.
                     "content": prompt,
                 },
             ],
+            keep_alive=os.getenv("CIAO_OLLAMA_KEEP_ALIVE", "10m"),
+            options={
+                "num_ctx": max(1, int(os.getenv("CIAO_OLLAMA_NUM_CTX", "4096"))),
+                "num_predict": max(1, int(os.getenv("CIAO_OLLAMA_NUM_PREDICT", "1024"))),
+                "temperature": 0,
+            },
         )
 
         result = response["message"]["content"]
+        print(f"CIAO_TIMING stage=ollama.call kind=legacy_architecture seconds={time.perf_counter()-started:.3f}")
 
         print("\n" + "-" * 70)
         print("ARCHITECTURE ANALYSIS")

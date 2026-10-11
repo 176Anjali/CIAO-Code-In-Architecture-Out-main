@@ -2,12 +2,16 @@ import ast
 import os
 import json
 import builtins
+from pathlib import Path
+
+from src.service.repository_files import iter_repository_files
 
 
 class CodeAnalyzer:
 
-    def __init__(self, repository_path):
+    def __init__(self, repository_path, source_files=None):
         self.repository_path = repository_path
+        self.source_files = list(source_files) if source_files is not None else None
         self.symbol_index = {}
         self.builtin_names = set(dir(builtins))
 
@@ -735,52 +739,21 @@ class CodeAnalyzer:
         # PASS 1: Parse all Python files and build symbols.
         # ------------------------------------------------------
 
-        for root, _, files in os.walk(self.repository_path):
-            normalized_root = root.replace("\\", "/")
-
-            ignored_folders = [
-                "/.git",
-                "/.history",
-                "/__pycache__",
-                "/venv",
-                "/.venv",
-                "/node_modules",
-            ]
-
-            if any(
-                ignored in normalized_root
-                for ignored in ignored_folders
-            ):
+        source_files = self.source_files if self.source_files is not None else iter_repository_files(Path(self.repository_path))
+        for source_file in source_files:
+            if source_file.suffix.lower() != ".py":
                 continue
-
-            for file in files:
-                if not file.endswith(".py"):
-                    continue
-
-                file_path = os.path.join(root, file)
-                analysis = self.analyze_file(file_path)
-
-                if not analysis:
-                    continue
-
-                results.append(analysis)
-
-                for class_info in analysis["classes"]:
-                    self.symbol_index[
-                        class_info["name"]
-                    ] = file_path
-
-                for method in analysis["methods"]:
-                    method_name = (
-                        f"{method['class']}."
-                        f"{method['name']}"
-                    )
-                    self.symbol_index[method_name] = file_path
-
-                self._add_function_symbols(
-                    analysis,
-                    file_path,
-                )
+            file_path = str(source_file)
+            analysis = self.analyze_file(file_path)
+            if not analysis:
+                continue
+            results.append(analysis)
+            for class_info in analysis["classes"]:
+                self.symbol_index[class_info["name"]] = file_path
+            for method in analysis["methods"]:
+                method_name = f"{method['class']}.{method['name']}"
+                self.symbol_index[method_name] = file_path
+            self._add_function_symbols(analysis, file_path)
 
         # ------------------------------------------------------
         # PASS 2: Class instance resolution.

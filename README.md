@@ -31,12 +31,31 @@ relationships, and the output generator produces a report and a deterministic di
 content and source paths are included as evidence where present. The website and GitHub sync
 send the verified graph, README, configuration, and source evidence to the configured Ollama
 model. The model response is included in the project-specific report; generation fails clearly
-if Ollama is unavailable or returns empty content. CIAO defaults to `llama3.2:3b` at
-`http://localhost:11434`, uses a 4,096-token context and 2,048-token response budget, and
-analyzes large repositories in bounded evidence chunks. Set `OLLAMA_HOST` and `OLLAMA_MODEL`
-as needed. On an 8 GB CPU computer, if `llama3.2:3b` cannot load, run
+if Ollama is unavailable or returns empty content. Architecture diagrams are generated
+deterministically from the validated knowledge graph, so they do not require a model call.
+CIAO defaults to `llama3.2:3b` at `http://localhost:11434`, uses a 4,096-token context,
+384 tokens per module-summary call, and 1,024 tokens for the final report. Set `OLLAMA_HOST`
+and `OLLAMA_MODEL` as needed. On an 8 GB CPU computer, if `llama3.2:3b` cannot load, run
 `ollama pull llama3.2:1b`, then in PowerShell run `$env:OLLAMA_MODEL = "llama3.2:1b"` and
 restart CIAO; the application does not switch models silently.
+
+## Generation performance and cache
+
+The active website and GitHub sync pipeline makes one Ollama call per uncached graph-summary
+chunk, followed by one final report call. At the default 12,000-character chunk target, the
+exact first-run count is `number of summary chunks + 1` (for example, two chunks mean three
+calls). A fully cached, unchanged input needs zero model calls; if one summary chunk changes,
+CIAO recomputes that summary and the final report. The deterministic architecture renderer
+makes zero Ollama calls. `CIAO_TIMING` log entries show graph analysis, each model call/cache
+lookup, and each output-rendering stage.
+
+Summary and final-report responses are cached under `.ciao-cache/`. Cache keys include the
+prompt version, model name, and chunk content hash. The GitHub Actions workflow restores a
+prior cache and saves the updated cache. `.gitignore` excludes this local cache from project
+commits. You can configure `CIAO_OLLAMA_NUM_CTX` (default `4096`),
+`CIAO_OLLAMA_SUMMARY_NUM_PREDICT` (default `384`), `CIAO_OLLAMA_NUM_PREDICT` (default
+`1024`), `CIAO_OLLAMA_KEEP_ALIVE` (default `10m`), and `CIAO_SUMMARY_CHUNK_CHARS` (default
+`12000`).
 
 ## GitHub synchronization
 

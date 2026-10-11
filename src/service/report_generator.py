@@ -5,6 +5,8 @@ import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
 
+from src.service.repository_files import iter_repository_files
+
 
 def architecture_text(
     repository_path: Path,
@@ -87,7 +89,7 @@ Containers and components are represented only by detected graph nodes and relat
 The arc42 sections for context, building blocks, runtime/data flow, deployment, and risks are
 limited to repository evidence listed in this report.
 
-Ollama architecture analysis
+Evidence-grounded project documentation
 {ollama_description or "Unavailable because Ollama generation was not completed."}
 
 REST APIs, data flow, and storage
@@ -125,10 +127,7 @@ Source reference
 
 def _repository_evidence(repository_path: Path, readme: str) -> Dict[str, str]:
     root = repository_path if repository_path.is_dir() else repository_path.parent
-    files = [
-        path for path in root.rglob("*")
-        if path.is_file() and ".git" not in path.parts and path.stat().st_size <= 1_000_000
-    ][:250]
+    files = iter_repository_files(root, max_file_bytes=1_000_000)[:250]
     names = [path.relative_to(root).as_posix() for path in files]
     lower_names = [name.lower() for name in names]
     text_parts: List[str] = []

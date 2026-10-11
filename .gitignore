@@ -23,3 +23,6 @@ secrets.json
 
 # Generated files
 output/
+
+# Cached Ollama module summaries and reports
+.ciao-cache/

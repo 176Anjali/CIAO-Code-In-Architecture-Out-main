@@ -4,6 +4,7 @@ from pathlib import Path
 import networkx as nx
 
 from src.parser.code_analyzer import CodeAnalyzer
+from src.service.repository_files import iter_repository_files
 
 
 class RepositoryKnowledgeGraph:
@@ -12,6 +13,10 @@ class RepositoryKnowledgeGraph:
     def __init__(self, repository_path):
         self.repository_path = Path(repository_path).resolve()
         self.graph = nx.MultiDiGraph()
+        self._repo_files = iter_repository_files(self.repository_path)
+        self._repo_files_by_stem = {
+            path.stem: path for path in self._repo_files if path.suffix.lower() == ".py"
+        }
 
     # -----------------------------------------------------------------
     # IDs
@@ -206,7 +211,7 @@ class RepositoryKnowledgeGraph:
     # -----------------------------------------------------------------
     def add_imports(self, file_path, imports):
         source = self.file_id(file_path)
-        repo_files = {p.stem: p for p in self.repository_path.rglob("*.py")}
+        repo_files = self._repo_files_by_stem
 
         for item in imports or []:
             name = self._name(item)
@@ -440,7 +445,7 @@ class RepositoryKnowledgeGraph:
     # Build
     # -----------------------------------------------------------------
     def build(self):
-        analyzer = CodeAnalyzer(str(self.repository_path))
+        analyzer = CodeAnalyzer(str(self.repository_path), source_files=self._repo_files)
         results = analyzer.analyze_repository()
 
         functions = set()
