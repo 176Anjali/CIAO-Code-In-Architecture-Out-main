@@ -28,6 +28,7 @@ generate_documentation_report,
 validate_output,
 )
 from src.service.repository_files import iter_repository_files
+from src.service.plantuml_renderer import render_architecture_png
 
 
 @dataclass(frozen=True)
@@ -184,65 +185,74 @@ class AnalysisService:
                 sync_at=metadata.get("sync_at"),
             )
         self._validate_analysis_context(context, source_path)
-        analysis_started = time.perf_counter()
-        graph_started = time.perf_counter()
-        graph_builder = RepositoryKnowledgeGraph(str(source_path))
-        graph_builder.build()
-        graph = graph_builder.to_dict()
-        if not graph.get("nodes"):
-            graph = self._fallback_file_graph(source_path)
-        print(f"CIAO_TIMING stage=analysis.graph seconds={time.perf_counter()-graph_started:.3f} nodes={len(graph.get('nodes', []))} edges={len(graph.get('edges', []))}")
-        graph_path = output_dir / "graph" / "repository_graph.json"
-        graph_path.parent.mkdir(parents=True, exist_ok=True)
-        graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
-        summary = self._summarize_graph(graph)
-        readme = self._read_readme(source_path, context.file_manifest)
-        architecture_spec = build_architecture_spec_from_graph(
-            graph, repository_path=source_path, project_name=context.project_name
-        )
-        print(f"CIAO_TIMING stage=analysis.total seconds={time.perf_counter()-analysis_started:.3f} files={len(context.file_manifest)}")
-        report_started = time.perf_counter()
-        try:
-            ollama_description = generate_documentation_report(
-                graph, readme=readme, context=asdict(context),
-            )
-        except RuntimeError:
-            if require_ollama:
-                raise
-            ollama_description = "Ollama generation was skipped; only static repository evidence is available."
-        print(f"CIAO_TIMING stage=documentation.prepare seconds={time.perf_counter()-report_started:.3f}")
+        output_dir.mkdir(parents=True, exist_ok=True)
         document_path = output_dir / f"documentation.{document_format}"
         diagram_path = output_dir / f"architecture.{image_format}"
-        report_metadata = dict(metadata or {})
-        report_metadata.setdefault("output_filename", document_path.name)
-        report_metadata.setdefault("output_format", document_format)
-        report_metadata.setdefault("generated_at", datetime.now().astimezone().isoformat())
-        report_metadata.setdefault("source_name", source_path.name)
-        report_metadata.setdefault("branch", "Unavailable")
-        report_metadata.setdefault("commit_message", "Unavailable")
-        report_metadata.setdefault("commit_sha", commit_sha)
-        report_metadata.update({
-            "source_repository": context.submitted_source,
-            "project_name": context.project_name,
-            "repository_path": context.repository_path,
-            "file_manifest": context.file_manifest,
+        stage_dir = Path(tempfile.mkdtemp(prefix="ciao-prompt-", dir=output_dir))
+        snapshot_path = stage_dir / "full_code.txt"
+        markdown_path = stage_dir / "arc42_documentation.md"
+        config = json.loads((self.base_dir / "repomix.config.json").read_text(encoding="utf-8"))
+        config.setdefault("output", {})["filePath"] = str(snapshot_path)
+        config_path = stage_dir / "repomix.config.json"
+        config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+        environment = os.environ.copy()
+        environment.update({
+            "CIAO_REPOMIX_CONFIG_PATH": str(config_path),
+            "CIAO_FULL_CODE_PATH": str(snapshot_path),
+            "CIAO_DOCUMENTATION_PATH": str(markdown_path),
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
         })
-        report_text = architecture_text(
-            source_path,
-            commit_sha,
-            graph,
-            readme,
-            report_metadata,
-            ollama_description,
-            context=asdict(context),
-        )
-        render_started = time.perf_counter()
-        write_document(report_text, document_path, document_format)
-        print(f"CIAO_TIMING stage=render.documentation seconds={time.perf_counter()-render_started:.3f}")
-        render_started = time.perf_counter()
-        write_diagram(architecture_spec, diagram_path, image_format)
-        print(f"CIAO_TIMING stage=render.architecture seconds={time.perf_counter()-render_started:.3f}")
-        return summary, document_path, diagram_path
+        started = time.perf_counter()
+        try:
+            completed = subprocess.run(
+                [sys.executable, str(self.base_dir / "main.py"), str(source_path)],
+                cwd=str(self.base_dir), env=environment, capture_output=True, text=True,
+                encoding="utf-8", errors="replace", timeout=3600, check=False,
+            )
+            print(f"CIAO_TIMING stage=repomix_ollama.total seconds={time.perf_counter()-started:.3f}")
+            if completed.returncode != 0:
+                detail = (completed.stderr or completed.stdout or "Ollama/Repomix failed").strip()
+                raise RuntimeError(f"Prompt-driven arc42 generation failed: {detail[-6000:]}")
+            if not markdown_path.is_file() or not markdown_path.read_text(encoding="utf-8").strip():
+                raise RuntimeError("The original prompt pipeline returned an empty arc42 report")
+
+            markdown = markdown_path.read_text(encoding="utf-8")
+            staged_diagram = stage_dir / f"architecture.{image_format}"
+            markdown, diagram_count = render_architecture_png(markdown, staged_diagram, image_format)
+
+            report_metadata = metadata or {}
+            metadata_block = [
+                "", "## CIAO Generation Metadata", "",
+                f"- Source: `{context.submitted_source}`",
+                f"- Branch: `{context.branch}`",
+                f"- Commit ID: `{context.commit_sha}`",
+                f"- Commit message: `{context.commit_message}`",
+                f"- Generated at: `{report_metadata.get('generated_at', context.generated_at)}`",
+            ]
+            if context.sync_at:
+                metadata_block.append(f"- GitHub sync time: `{context.sync_at}`")
+            markdown = markdown.rstrip() + "\n" + "\n".join(metadata_block) + "\n"
+            staged_document = stage_dir / document_path.name
+            rendering_started = time.perf_counter()
+            write_document(markdown, staged_document, document_format)
+            print(f"CIAO_TIMING stage=render.documentation seconds={time.perf_counter()-rendering_started:.3f}")
+            validate_output(staged_document, document_format)
+            validate_output(staged_diagram, image_format)
+            # Keep the previous outputs untouched until both new artifacts validate.
+            os.replace(staged_document, document_path)
+            os.replace(staged_diagram, diagram_path)
+            summary = {
+                "project_name": context.project_name,
+                "files_in_manifest": len(context.file_manifest),
+                "source_snapshot_bytes": snapshot_path.stat().st_size if snapshot_path.exists() else 0,
+                "rendered_plantuml_blocks": diagram_count,
+                "documentation_format": document_format,
+                "architecture_format": image_format,
+            }
+            return summary, document_path, diagram_path
+        finally:
+            shutil.rmtree(stage_dir, ignore_errors=True)
 
     def _build_analysis_context(
         self,
