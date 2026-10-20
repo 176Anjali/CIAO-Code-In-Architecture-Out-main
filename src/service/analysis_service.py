@@ -206,10 +206,20 @@ class AnalysisService:
             ollama_description = generate_documentation_report(
                 graph, readme=readme, context=asdict(context),
             )
-        except RuntimeError:
-            if require_ollama:
+        except RuntimeError as exc:
+            if "Ollama returned an invalid architecture_spec" in str(exc):
+                # A malformed or truncated model response must not prevent the
+                # user from receiving the graph-backed report and diagram.
+                ollama_description = (
+                    "Ollama returned an invalid architecture specification; "
+                    "the report and diagram use the statically extracted repository graph.\n\n"
+                    + json.dumps(architecture_spec, indent=2, ensure_ascii=False)
+                )
+                print(f"CIAO_WARNING stage=analysis.ollama_invalid detail={exc}")
+            elif require_ollama:
                 raise
-            ollama_description = "Ollama generation was skipped; only static repository evidence is available."
+            else:
+                ollama_description = "Ollama generation was skipped; only static repository evidence is available."
         print(f"CIAO_TIMING stage=documentation.prepare seconds={time.perf_counter()-report_started:.3f}")
         document_path = output_dir / f"documentation.{document_format}"
         diagram_path = output_dir / f"architecture.{image_format}"
