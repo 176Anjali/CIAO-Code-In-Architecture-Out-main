@@ -42,6 +42,12 @@ def web_application() -> FileResponse:
     return FileResponse(WEB_INDEX)
 
 
+@app.get("/health", include_in_schema=False)
+def healthcheck() -> dict:
+    """Provide a lightweight endpoint for the website's connection diagnostics."""
+    return {"status": "ok"}
+
+
 @app.post("/api/generate")
 async def generate_outputs(
     repository_url: Optional[str] = Form(default=None),

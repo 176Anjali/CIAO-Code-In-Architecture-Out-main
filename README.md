@@ -13,7 +13,8 @@ python -m pip install -r requirements.txt
 uvicorn src.api:app --reload
 ```
 
-Open <http://127.0.0.1:8000/>. Choose one input, select PDF or DOCX and PNG or SVG, then click
+Open <http://127.0.0.1:8000/>. The <http://127.0.0.1:8000/health> endpoint returns
+`{"status":"ok"}` while the API is reachable. Choose one input, select PDF or DOCX and PNG or SVG, then click
 **Generate documentation and diagram**. The page returns exactly two downloads:
 `documentation.pdf` or `documentation.docx`, and `architecture.png` or `architecture.svg`.
 The results also show the source name, branch, full source commit ID/message when available,
@@ -62,8 +63,10 @@ Update it before restarting the server:
 git -C /content/CIAO-Code-In-Architecture-Out-main pull --ff-only origin main
 ```
 
-Then stop the old Uvicorn process and rerun the server-start cell. A tunnel URL is temporary;
-re-run the tunnel cell after the Colab runtime resets. If generation fails, inspect
+Then stop the old Uvicorn process and rerun the server-start cell. Check that
+`http://127.0.0.1:8000/health` returns `{"status":"ok"}` before launching the tunnel. A tunnel URL is temporary;
+re-run the tunnel cell after the Colab runtime resets. If the website reports that it cannot
+reach CIAO, reopen the newest tunnel URL. If generation fails with an HTTP error, inspect
 `/content/ciao_server.log` for the specific model validation reason. Colab runtimes are
 ephemeral, and their local Ollama server is not reachable by GitHub-hosted Actions.
 
