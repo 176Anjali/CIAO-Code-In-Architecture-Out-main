@@ -183,18 +183,26 @@ def _extract_json_object(content: str) -> Dict[str, Any]:
 def _validate_architecture_spec(spec: Dict[str, Any]) -> Dict[str, Any]:
     if not isinstance(spec, dict):
         raise RuntimeError("Architecture specification must be a JSON object")
-    required = ARCHITECTURE_KEYS - {"external_actors_or_services"}
-    missing = sorted(key for key in required if key not in spec)
-    if missing:
-        raise RuntimeError(
-            "Architecture specification is missing required keys: " + ", ".join(missing)
-        )
+    # Some local Ollama models wrap the requested object or omit empty arrays.
+    # Recover those harmless shape differences instead of failing the whole
+    # documentation request; malformed individual records are omitted below.
+    nested = spec.get("architecture_spec")
+    if isinstance(nested, dict):
+        spec = nested
+    required_collections = ("components", "relationships", "principal_flow", "unknowns")
+    missing = [key for key in required_collections if key not in spec]
     components = spec.get("components", [])
     relationships = spec.get("relationships", [])
-    if not isinstance(components, list) or not isinstance(relationships, list):
-        raise RuntimeError("Architecture specification components and relationships must be lists")
-    normalized_components = []
     unknowns = _string_list(spec.get("unknowns"))
+    if missing:
+        unknowns.append("Ollama omitted optional empty fields: " + ", ".join(missing) + ".")
+    if not isinstance(components, list):
+        components = []
+        unknowns.append("Ollama returned components in an unsupported shape; they were omitted.")
+    if not isinstance(relationships, list):
+        relationships = []
+        unknowns.append("Ollama returned relationships in an unsupported shape; they were omitted.")
+    normalized_components = []
     ids = set()
     for item in components:
         if not isinstance(item, dict) or not item.get("id") or not item.get("name") or not item.get("responsibility"):
