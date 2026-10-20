@@ -34,28 +34,38 @@ model. The model response is included in the project-specific report; generation
 if Ollama is unavailable or returns empty content. Architecture diagrams are generated
 deterministically from the validated knowledge graph, so they do not require a model call.
 CIAO defaults to `llama3.2:3b` at `http://localhost:11434`, uses a 4,096-token context,
-384 tokens per module-summary call, and 2,048 tokens for the final report. Set `OLLAMA_HOST`
+and requests a compact, evidence-backed architecture response. Set `OLLAMA_HOST`
 and `OLLAMA_MODEL` as needed. On an 8 GB CPU computer, if `llama3.2:3b` cannot load, run
 `ollama pull llama3.2:1b`, then in PowerShell run `$env:OLLAMA_MODEL = "llama3.2:1b"` and
 restart CIAO; the application does not switch models silently.
 
 ## Generation performance and cache
 
-The active website and GitHub sync pipeline makes one Ollama call per uncached graph-summary
-chunk, followed by one final report call. At the default 12,000-character chunk target, the
-exact first-run count is `number of summary chunks + 1` (for example, two chunks mean three
-calls). A fully cached, unchanged input needs zero model calls; if one summary chunk changes,
-CIAO recomputes that summary and the final report. The deterministic architecture renderer
-makes zero Ollama calls. `CIAO_TIMING` log entries show graph analysis, each model call/cache
-lookup, and each output-rendering stage.
+Each website generation makes one Ollama call for its concise architecture summary; the
+diagram itself is built deterministically from the extracted repository graph. If the model
+returns an invalid shape, CIAO retries once with the specific validation issue and reports
+the final reason so the failure can be diagnosed. `CIAO_TIMING` log entries show graph
+analysis and each output-rendering stage.
 
-Summary and final-report responses are cached under `.ciao-cache/`. Cache keys include the
-prompt version, model name, and chunk content hash. The GitHub Actions workflow restores a
-prior cache and saves the updated cache. `.gitignore` excludes this local cache from project
-commits. You can configure `CIAO_OLLAMA_NUM_CTX` (default `4096`),
-`CIAO_OLLAMA_SUMMARY_NUM_PREDICT` (default `384`), `CIAO_OLLAMA_NUM_PREDICT` (default
-`2048`), `CIAO_OLLAMA_KEEP_ALIVE` (default `10m`), and `CIAO_SUMMARY_CHUNK_CHARS` (default
-`12000`).
+The Ollama request uses a 4,096-token context and 1,024-token response limit. Set
+`CIAO_ARCHITECTURE_CONTEXT_CHARS` to control the maximum source-evidence text supplied to the
+architecture prompt (default `12000`).
+
+## Running the notebook in Colab
+
+The shared Colab workflow starts Ollama, launches this FastAPI app, and exposes it through a
+temporary Cloudflare tunnel. If `/content/CIAO-Code-In-Architecture-Out-main` already exists,
+`git clone` will fail and the notebook will keep running whatever checkout is already there.
+Update it before restarting the server:
+
+```bash
+git -C /content/CIAO-Code-In-Architecture-Out-main pull --ff-only origin main
+```
+
+Then stop the old Uvicorn process and rerun the server-start cell. A tunnel URL is temporary;
+re-run the tunnel cell after the Colab runtime resets. If generation fails, inspect
+`/content/ciao_server.log` for the specific model validation reason. Colab runtimes are
+ephemeral, and their local Ollama server is not reachable by GitHub-hosted Actions.
 
 ## GitHub synchronization
 
