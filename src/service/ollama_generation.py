@@ -312,11 +312,27 @@ def build_architecture_spec_from_graph(
         module_path = str(Path(relative).with_suffix("")).replace("/", ".").replace("\\", ".")
         module_to_file.setdefault(module_path, []).append(node_id)
         module_to_file.setdefault(Path(relative).stem, []).append(node_id)
+        functions = []
+        if Path(relative).suffix.lower() == ".py":
+            try:
+                import ast
+                source_text = (root / relative).read_text(encoding="utf-8", errors="replace")
+                parsed = ast.parse(source_text)
+                functions = [
+                    item.name for item in ast.walk(parsed)
+                    if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+                ]
+            except (OSError, SyntaxError, UnicodeError):
+                functions = []
         components.append({
             "id": node_id,
             "name": relative,
-            "responsibility": "Source module",
+            "responsibility": (
+                "Python module · " + ", ".join(f"{name}()" for name in functions[:4])
+                if functions else "Source module"
+            ),
             "evidence": [relative],
+            "functions": functions[:12],
         })
 
     relationships = []

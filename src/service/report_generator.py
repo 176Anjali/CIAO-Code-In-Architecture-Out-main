@@ -19,6 +19,9 @@ def architecture_text(
     context: Dict[str, Any] | None = None,
 ) -> str:
     context = context or {}
+    manifest = context.get("file_manifest") or metadata.get("file_manifest") or []
+    if len(manifest) == 1:
+        return _single_file_report(repository_path, str(manifest[0]), commit_sha, metadata, context)
     ev = _repository_evidence(repository_path, readme)
     name = context.get("project_name") or metadata.get("source_name") or repository_path.name
     return f"""# {name}
@@ -167,6 +170,92 @@ def _repository_evidence(repository_path: Path, readme: str) -> Dict[str, str]:
     }
 
 
+def _single_file_report(
+    repository_path: Path,
+    relative_file: str,
+    commit_sha: str,
+    metadata: Dict[str, str],
+    context: Dict[str, Any],
+) -> str:
+    root = repository_path if repository_path.is_dir() else repository_path.parent
+    path = root / relative_file
+    source_name = Path(relative_file).name
+    project = Path(source_name).stem.replace("_", " ").title() or "Source file"
+    source = ""
+    try:
+        source = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        pass
+    functions: List[str] = []
+    classes: List[str] = []
+    language = {
+        ".py": "Python", ".js": "JavaScript", ".jsx": "JavaScript/JSX",
+        ".ts": "TypeScript", ".tsx": "TypeScript/JSX", ".java": "Java",
+        ".go": "Go", ".rs": "Rust", ".cs": "C#",
+    }.get(Path(source_name).suffix.lower(), "source")
+    description = "A single source file was provided. Its purpose is described only from the code visible in that file."
+    try:
+        import ast
+        tree = ast.parse(source)
+        functions = [node.name for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        classes = [node.name for node in ast.walk(tree) if isinstance(node, ast.ClassDef)]
+        module_doc = ast.get_docstring(tree)
+        function_docs = [
+            " ".join((ast.get_docstring(node) or "").split())
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and ast.get_docstring(node)
+        ]
+        if module_doc:
+            description = " ".join(module_doc.split())
+        elif function_docs:
+            description = " ".join(function_docs[:3])
+        elif any(name.lower() in {"greet", "greeting", "hello"} for name in functions):
+            description = f"A simple greeting example implemented by {', '.join(functions)}()."
+        elif functions:
+            description = f"A small {language} module defining {', '.join(functions)}."
+        elif "hello" in source.lower() or "greet" in source.lower():
+            description = "A simple greeting example that defines or prints a hello message."
+    except (SyntaxError, ValueError):
+        pass
+    if not functions and Path(source_name).suffix.lower() != ".py":
+        matches = re.findall(
+            r"function\s+([A-Za-z_$][\w$]*)\s*\(|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?\(?",
+            source,
+        )
+        functions = list(dict.fromkeys(next((part for part in item if part), "") for item in matches))
+        functions = [name for name in functions if name]
+    listed = ", ".join(f"{name}()" for name in functions) or "No function definitions detected."
+    class_text = ", ".join(classes) or "No classes detected."
+    return f"""# {project}
+## Source file documentation
+
+**Source:** {source_name}
+**Branch:** {metadata.get('branch', context.get('branch', 'Unavailable'))}
+**Commit:** {commit_sha or 'Unavailable'}
+**Generated:** {metadata.get('generated_at', 'Unavailable')}
+**Report:** {metadata.get('output_filename', 'documentation.pdf')}
+**Files analyzed:** 1
+
+## Project documentation
+{description}
+
+## File overview
+{source_name} is the complete input provided for this report. The diagram shows the file as a {language} module and its declared functions where present.
+
+## Main functions
+{listed}
+
+## Types
+{class_text}
+
+## Architecture summary
+The module is the system boundary for this input. No external services, data stores, or other project files were included, so the diagram describes only the structure visible in {source_name}.
+
+## Run
+{f'Run {source_name} with the Python interpreter.' if Path(source_name).suffix == '.py' else 'Run this file using the appropriate runtime for its language.'} Any command-line arguments or runtime requirements are not specified by this single-file analysis.
+"""
+
+
 def write_document(text: str, path: Path, fmt: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     if fmt == "docx":
@@ -242,6 +331,7 @@ def _write_pdf(text: str, path: Path) -> None:
     pages = []
     page_no = 0
     page = draw = y = None
+    cover_page = "## Source file documentation" not in text
 
     def start_page(cover=False):
         nonlocal page, draw, y, page_no
@@ -270,17 +360,19 @@ def _write_pdf(text: str, path: Path) -> None:
             lines.append(current)
         return lines or [""]
 
-    start_page(cover=True)
+    start_page(cover=cover_page)
     for raw in text.splitlines():
         line = raw.strip()
         if not line:
             y += 10
             continue
+        starts_bold = line.startswith("**")
         line = line.replace("**", "").replace("`", "")
         if line.startswith("# "):
-            font = title_font if page_no == 1 else section_font
-            color = "#f4fbfa" if page_no == 1 else "#173b43"
-            x = 140 if page_no == 1 else 88
+            is_cover = page_no == 1 and cover_page
+            font = title_font if is_cover else section_font
+            color = "#f4fbfa" if is_cover else "#173b43"
+            x = 140 if is_cover else 88
             for piece in wrap(line[2:], font, width - x - 110):
                 if y > height - 125:
                     pages.append(page)
@@ -295,16 +387,16 @@ def _write_pdf(text: str, path: Path) -> None:
             if y > height - 200:
                 pages.append(page)
                 start_page()
-            if page_no == 1:
+            if page_no == 1 and cover_page:
                 draw.text((140, y), line[3:], font=section_font, fill="#c8ebe4")
             else:
                 draw.rounded_rectangle((88, y - 2, 105, y + 33), radius=5, fill="#107c72")
                 draw.text((122, y - 5), line[3:], font=section_font, fill="#173b43")
             y += 55
             continue
-        if line.startswith("**"):
-            line, font = line.replace("**", ""), bold
-            color = "#c8ebe4" if page_no == 1 else "#31525b"
+        if starts_bold:
+            font = bold
+            color = "#c8ebe4" if page_no == 1 and cover_page else "#31525b"
         elif line.startswith("- "):
             line, font, color = "•  " + line[2:], regular, "#344c55"
         else:
@@ -380,6 +472,30 @@ def _png(graph: Dict[str, Any]) -> bytes:
 def _architecture_svg(spec: Dict[str, Any]) -> str:
     components = [item for item in spec.get("components", []) if item.get("id")][:40]
     external = [item for item in spec.get("external_actors_or_services", []) if item.get("id")][:20]
+    if len(components) == 1 and not external:
+        component = components[0]
+        module = html.escape(Path(str(component.get("name") or "source")).name)
+        package = html.escape(Path(module).stem)
+        functions = component.get("functions", [])[:6]
+        rows = []
+        for index, function in enumerate(functions):
+            y = 300 + index * 68
+            if y + 52 > 650:
+                break
+            rows.append(
+                f'<g><rect x="350" y="{y}" width="400" height="50" rx="9" fill="#eef3e8" stroke="#aab99f"/><circle cx="375" cy="{y + 25}" r="14" fill="#d2dec7" stroke="#849779"/><text x="375" y="{y + 31}" text-anchor="middle" font-size="17" fill="#3a523b">f</text><text x="405" y="{y + 32}" font-size="17" fill="#27392b">{html.escape(str(function))}()</text></g>'
+            )
+        if not rows:
+            rows.append('<text x="550" y="420" text-anchor="middle" font-size="18" fill="#536653">Module contents</text>')
+        return (
+            '<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="700" viewBox="0 0 1000 700">'
+            '<rect width="1000" height="700" fill="#fafbf8"/><text x="55" y="55" font-size="15" letter-spacing="2" fill="#597460">SOURCE FILE ARCHITECTURE</text>'
+            '<rect x="175" y="160" width="650" height="465" rx="18" fill="#fff" stroke="#66766a" stroke-width="3"/><path d="M175 205V175Q175 160 190 160H410L438 205Z" fill="#fafbf8" stroke="#66766a" stroke-width="3"/><path d="M175 205H825" stroke="#66766a" stroke-width="3"/>'
+            f'<text x="202" y="194" font-size="24" font-weight="700" fill="#26382b">{package}</text>'
+            '<rect x="285" y="260" width="430" height="330" rx="13" fill="#fbfcfa" stroke="#889689" stroke-width="2"/>'
+            f'<text x="500" y="294" text-anchor="middle" font-size="22" font-weight="700" fill="#26382b">{module}</text>{"".join(rows)}'
+            '<text x="55" y="670" font-size="14" fill="#6d7c6e">Scope: one submitted file · No additional modules or runtime services provided</text></svg>'
+        )
     nodes = external + components
     ids = {item["id"] for item in nodes}
     width, height = 1400, max(360, ((len(nodes) + 4) // 5) * 120)
@@ -473,6 +589,46 @@ def _architecture_png(spec: Dict[str, Any]) -> bytes:
         label_font = ImageFont.truetype("DejaVuSans.ttf", 11)
     except OSError:
         title_font = name_font = detail_font = label_font = ImageFont.load_default()
+    if len(components) == 1 and not external:
+        component = components[0]
+        module_name = Path(str(component.get("name") or "source")).name
+        functions = [str(name) for name in component.get("functions", [])][:8]
+        width, height = 1200, 760
+        image = Image.new("RGB", (width, height), (250, 251, 248))
+        draw = ImageDraw.Draw(image)
+        try:
+            title_font = ImageFont.truetype(str(Path(os.getenv("WINDIR", "C:/Windows")) / "Fonts" / "arialbd.ttf"), 28)
+            name_font = ImageFont.truetype(str(Path(os.getenv("WINDIR", "C:/Windows")) / "Fonts" / "arialbd.ttf"), 24)
+            detail_font = ImageFont.truetype(str(Path(os.getenv("WINDIR", "C:/Windows")) / "Fonts" / "arial.ttf"), 19)
+            label_font = ImageFont.truetype(str(Path(os.getenv("WINDIR", "C:/Windows")) / "Fonts" / "arial.ttf"), 17)
+        except OSError:
+            title_font = ImageFont.load_default()
+            name_font = detail_font = label_font = title_font
+        draw.text((64, 48), "SOURCE FILE ARCHITECTURE", fill=(89, 116, 104), font=label_font)
+        # Package frame and tab echo the simple file/module view in the old site.
+        draw.rounded_rectangle((244, 190, 960, 655), radius=20, fill=(255, 255, 255), outline=(102, 117, 106), width=4)
+        draw.rectangle((244, 168, 523, 213), fill=(250, 251, 248), outline=(102, 117, 106), width=4)
+        draw.line((244, 213, 960, 213), fill=(102, 117, 106), width=4)
+        draw.text((270, 171), Path(module_name).stem, fill=(34, 48, 40), font=name_font)
+        # The source module is the only verified building block for a one-file input.
+        draw.rounded_rectangle((367, 300, 838, 570), radius=14, fill=(249, 250, 247), outline=(122, 136, 124), width=3)
+        draw.text((602, 325), module_name, fill=(35, 50, 41), font=name_font, anchor="mm")
+        if functions:
+            row_y = 390
+            for function_name in functions:
+                draw.rounded_rectangle((422, row_y, 783, row_y + 76), radius=10, fill=(238, 242, 235), outline=(162, 174, 156), width=2)
+                draw.ellipse((440, row_y + 18, 481, row_y + 59), fill=(202, 214, 191), outline=(129, 146, 115), width=2)
+                draw.text((460, row_y + 38), "f", fill=(58, 81, 56), font=name_font, anchor="mm")
+                draw.text((505, row_y + 22), f"{function_name}()", fill=(44, 61, 47), font=detail_font)
+                row_y += 92
+                if row_y > 560:
+                    break
+        else:
+            draw.text((602, 440), "Module contents", fill=(84, 103, 88), font=detail_font, anchor="mm")
+        draw.text((64, 708), "Scope: one submitted file · Other modules and runtime services were not provided", fill=(99, 117, 104), font=label_font)
+        result = io.BytesIO()
+        image.save(result, format="PNG")
+        return result.getvalue()
     positions = {item["id"]: (190 + (i % columns) * 370, 125 + (i // columns) * 150) for i, item in enumerate(nodes)}
     draw.text((48, 36), str(spec.get("title", "Evidence-backed architecture"))[:90], fill=(237, 245, 242), font=title_font)
     draw.text((50, 70), "Repository structure / detected file imports", fill=(139, 165, 174), font=detail_font)
