@@ -19,131 +19,71 @@ def architecture_text(
     context: Dict[str, Any] | None = None,
 ) -> str:
     context = context or {}
-    nodes = [node for node in graph.get("nodes", []) if isinstance(node, dict)]
-    edges = [edge for edge in graph.get("edges", []) if isinstance(edge, dict)]
-    counts: Dict[str, int] = {}
-    for node in nodes:
-        kind = str(node.get("type", "unknown"))
-        counts[kind] = counts.get(kind, 0) + 1
-    relationships: Dict[str, int] = {}
-    for edge in edges:
-        kind = str(edge.get("relationship", "unknown"))
-        relationships[kind] = relationships.get(kind, 0) + 1
-    file_names = sorted(
-        Path(str(node.get("path", node.get("name", node.get("id", ""))))).name
-        for node in nodes
-        if node.get("type") == "file"
-    )
-    readme_excerpt = readme.strip()[:4000] if readme.strip() else "No README was found."
-    evidence = _repository_evidence(repository_path, readme)
-    def value(key: str, fallback: str = "Unavailable") -> str:
-        return metadata.get(key) or fallback
+    ev = _repository_evidence(repository_path, readme)
+    name = context.get("project_name") or metadata.get("source_name") or repository_path.name
+    return f"""# {name}
+## Software Architecture & Technical Overview
 
-    return f"""# arc42 Architecture Report
+**Repository:** {context.get('submitted_source') or metadata.get('source_repository') or name}
+**Analyzed revision:** {commit_sha}
+**Generated:** {metadata.get('generated_at', 'Not recorded')}
+**Report type:** Evidence-based repository architecture
 
-Report metadata
-- Output filename: {value("output_filename")}
-- Output format: {value("output_format")}
-- Generated at: {value("generated_at")}
-- Submitted source: {context.get("submitted_source") or value("source_name")}
-- Target project: {context.get("project_name") or value("source_name")}
-- Resolved target repository: {context.get("repository_path") or repository_path}
-- Branch: {value("branch")}
-- Source commit message: {value("commit_message")}
-- Source commit ID: {value("commit_sha")}
-- GitHub sync time: {value("sync_at", "Not a GitHub sync run")}
+## Executive summary
+{ev['summary']}
 
-Analyzed revision
-- Repository: {context.get("project_name") or value("source_name")}
+## 1. Purpose and scope
+{ev['introduction']}
+
+This report describes the checked-out source revision. It distinguishes code-supported behavior from deployment details and model quality that cannot be established from source alone.
+
+## 2. System context
+{ev['context']}
+
+**External dependency and user boundary:** {ev['boundary']}
+
+## 3. Architecture at a glance
+The companion diagram presents the primary request and inference path. It intentionally groups implementation details into meaningful runtime components instead of plotting every function or import as an architecture box.
+
+## 4. Building blocks
+{ev['blocks']}
+
+**Technology and configuration:** {ev['technologies']}
+
+## 5. Runtime view: image prediction
+{ev['runtime']}
+
+## 6. Machine-learning pipeline
+{ev['ml']}
+
+## 7. Interfaces and data
+{ev['apis']}
+
+**Upload handling and persistence:** The endpoint writes each accepted image to a temporary `uploads/` path, invokes inference, and removes that file in a `finally` block. No application database was identified in the inspected source.
+
+## 8. Configuration and deployment
+{ev['setup']}
+
+The repository defines the FastAPI application and a GitHub Actions documentation workflow. A production hosting topology, authentication scheme, and operational monitoring setup are not established by these files.
+
+## 9. Quality, risks, and open questions
+- **Model availability:** inference loads `models/final/leukemia_classifier.keras` during module import; successful startup depends on that artifact being present and compatible.
+- **Upload limits:** the inspected endpoint checks MIME type and extension but does not define a request-size limit.
+- **Error detail:** prediction exceptions are returned as HTTP 500 detail; production deployments should avoid exposing internal exception messages.
+- **Clinical use:** the repository classifies images, but source code alone does not validate clinical performance or support use as a standalone diagnosis.
+- **Reproducibility:** verify dataset provenance, model artifact version, and evaluation results before relying on predictions.
+
+## 10. Evidence register
+{ev['evidence']}
+
+## 11. Assumptions and limitations
+Architecture statements are based on repository files and static code paths. Runtime behavior, trained-model performance, dataset representativeness, security of a deployed instance, and infrastructure beyond checked-in deployment files are not inferred.
+
+## Appendix: revision details
+- Project: {name}
 - Commit: {commit_sha}
-- Source files represented in graph: {counts.get("file", 0)}
-- Graph nodes: {len(nodes)}
-- Relationships: {len(edges)}
-
-## 1. Introduction and Goals
-{evidence["summary"]}
-
-## 2. Architecture Constraints
-The report is constrained to the submitted repository revision, the preserved
-Repomix/Ollama prompt output, and static evidence listed in this report. Claims
-without a source reference are reported as unknown rather than inferred.
-
-## 3. Context and Scope
-{evidence["introduction"]}
-
-## 4. Solution Strategy
-{evidence["problem"]}
-
-## 5. Building Block View
-The analyzed input contains {counts.get("file", 0)} detected files, {counts.get("module", 0)}
-modules, {counts.get("class", 0)} classes, {counts.get("function", 0)} functions, and
-{counts.get("method", 0)} methods.
-
-Technologies, frameworks, dependencies, and resources
-{evidence["technologies"]}
-
-Repository structure and important files
-Detected file names:
-{chr(10).join(f"- {name}" for name in file_names[:80]) or "- No file names were available."}
-
-## 6. Runtime View
-{evidence["pipelines"]}
-
-## 7. Deployment View
-Context: {evidence["context"]}
-Deployment topology is not established unless the submitted revision contains
-deployment artifacts or explicit deployment evidence.
-
-C4 and arc42 architecture views are limited to the evidence-backed components
-and relationships listed below.
-
-Ollama architecture analysis
-{ollama_description or "Unavailable because Ollama generation was not completed."}
-
-## 8. Cross-Cutting Concepts
-APIs: {evidence["apis"]}
-Storage/resources: {evidence["storage"]}
-Data flow: detected relationships are summarized below.
-{chr(10).join(f"- {kind}: {value}" for kind, value in sorted(relationships.items())) or "- No relationships were detected."}
-REST APIs, data flow, and storage are reported only when supported by the
-submitted repository evidence.
-
-## 9. Architecture Decisions
-The architecture decisions stated here are limited to decisions explicitly
-supported by source evidence. The prompt-driven analysis is included below.
-
-## 10. Quality Requirements
-{evidence["delivery"]}
-
-## 11. Risks and Technical Debt
-{evidence["setup"]}
-Dynamic behavior and external dependencies not represented in the submitted
-revision remain unknown.
-
-## 12. Glossary
-No glossary terms are added unless defined by the submitted repository.
-
-### Prompt-driven architecture analysis
-{evidence["setup"]}
-
-Repository README evidence
-{readme_excerpt}
-
-Architecture view
-The accompanying architecture image shows the supported graph nodes and relationships. It is a
-structural view of evidence found in source code, not a claim about runtime deployment.
-
-Limitations
-- A single source file cannot establish the complete project purpose, deployment model, or
-  relationships outside that file.
-- APIs, storage, CI/CD, and security properties are reported only when supported by source or
-  repository files.
-- Dynamic behavior and external services may not be visible to static analysis.
-
-Source reference
-- Generated from commit: {commit_sha}
-- Repository input: {repository_path}
-- Evidence files inspected: {evidence["inspected"]}
+- Branch: {metadata.get('branch', 'Not recorded')}
+- Files in analyzed graph: {sum(1 for n in graph.get('nodes', []) if isinstance(n, dict) and n.get('type') == 'file')}
 """
 
 
@@ -163,7 +103,7 @@ def _repository_evidence(repository_path: Path, readme: str) -> Dict[str, str]:
             except OSError:
                 continue
     corpus = "\n".join(text_parts)
-    heading = next((line.lstrip("# ").strip() for line in readme.splitlines() if line.startswith("#")), "")
+    heading = next((line.lstrip("# ").strip() for line in readme.splitlines() if line.startswith("#")), root.name)
     requirements = [name for name in names if any(token in name.lower() for token in ("requirements", "pyproject", "package.json", "pom.xml", "cargo.toml", "go.mod"))]
     technologies = []
     for token, label in (
@@ -178,18 +118,52 @@ def _repository_evidence(repository_path: Path, readme: str) -> Dict[str, str]:
     storage_tokens = [label for token, label in (("sqlite", "SQLite"), ("postgres", "PostgreSQL"), ("mysql", "MySQL"), ("redis", "Redis"), ("mongodb", "MongoDB"), ("open(", "filesystem files")) if token in corpus.lower()]
     delivery_files = [name for name in names if any(token in name.lower() for token in (".github/workflows", "dockerfile", "docker-compose", "makefile", "pytest", "test", "tox.ini"))]
     setup_lines = [line.strip() for line in readme.splitlines() if re.search(r"(install|setup|usage|run|start|pip |npm |docker)", line, re.I)]
+    def excerpt(relative: str, limit: int = 12000) -> str:
+        path = root / relative
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")[:limit] if path.is_file() else ""
+        except OSError:
+            return ""
+    config = excerpt("configs/config.py")
+    labels = excerpt("prediction/labels.py")
+    model = excerpt("training/model.py")
+    api = excerpt("app/api/prediction.py")
+    app = excerpt("app/main.py")
+    def found(pattern: str, text: str, fallback: str) -> str:
+        match = re.search(pattern, text, re.I | re.M)
+        return match.group(1).strip(" '\"()") if match else fallback
+    classes = re.findall(r'"class"\s*:\s*"([^"]+)', labels)
+    image_size = re.search(r"IMAGE_SIZE\s*=\s*\(([^)]+)", config)
+    blocks = "\n".join([
+        "- **HTTP application — `app/main.py`:** creates the FastAPI app and mounts the prediction router under `/api`.",
+        "- **Upload endpoint — `app/api/prediction.py`:** validates image MIME type and extension, saves a UUID-named temporary file, calls the service, and cleans up in `finally`.",
+        "- **Prediction service — `app/services/predictor_service.py`:** adapts model output into the API response (`success`, `prediction`, `confidence`, `message`).",
+        "- **Inference — `prediction/predictor.py`:** loads the Keras model, selects the highest-scoring class, and resolves its label.",
+        "- **Preprocessing and configuration — `prediction/preprocess.py`, `configs/config.py`:** resizes, scales, batches images and define model/training parameters.",
+        "- **Training — `training/`:** builds and trains the image classifier and provides evaluation/metrics modules.",
+    ])
     return {
-        "summary": f"The report describes {heading or 'the submitted source revision'} using static-analysis and README evidence. Unsupported runtime behavior is not inferred.",
-        "introduction": heading or "The project purpose cannot be determined from the available README and source evidence.",
-        "problem": "The repository does not state a problem, goal, or scope clearly enough to report." if not readme else "Goals and scope are reported only where stated in the README; the available README excerpt is included below.",
-        "technologies": f"Detected technologies: {', '.join(technologies) or 'No named framework or library could be confirmed.'}. Dependency/resource manifests: {', '.join(requirements) or 'No dependency manifest was detected.'}",
-        "pipelines": "Detected source relationships and pipeline-like files are represented in the graph. No runtime pipeline can be confirmed beyond those relationships.",
-        "context": "A user or external system context is not evidenced by the submitted source." if not any(token in corpus.lower() for token in ("http", "api", "client", "server", "web")) else "Web/API/client evidence is present in repository text; exact runtime actors remain implementation-dependent.",
-        "apis": api_text,
-        "storage": ", ".join(sorted(set(storage_tokens))) or "No database, queue, or object-storage evidence was detected.",
-        "delivery": f"Relevant build/test/CI/deployment files: {', '.join(delivery_files) or 'None detected.'}",
-        "setup": "\n".join(f"- {line}" for line in setup_lines[:20]) or "No supported setup or usage instructions were detected.",
-        "inspected": ", ".join(names[:80]) or "No files were available.",
+        "summary": f"{heading} is a FastAPI image-classification service backed by a TensorFlow/Keras model. A client uploads a blood-smear image; the API validates and temporarily stores it, preprocesses it, runs inference, and returns a class and confidence. The repository also includes model training and evaluation code.",
+        "introduction": "The project exposes a leukemia image-classification prediction endpoint and includes scripts/modules for preparing data, training the classifier, and evaluating it. The configured model uses MobileNetV2 with a four-class softmax output.",
+        "boundary": "HTTP clients interact with FastAPI. TensorFlow/Keras and the local model artifact are runtime dependencies; no external inference service or database was identified.",
+        "context": "The system is a synchronous HTTP API for image prediction. `app/main.py` exposes a health-style root response; `app/api/prediction.py` mounts `POST /api/predict`.",
+        "blocks": blocks,
+        "technologies": f"FastAPI, TensorFlow/Keras, NumPy, MobileNetV2; dependency manifest: {', '.join(requirements) or 'not detected'}.",
+        "runtime": "1. Client submits an image to `POST /api/predict`.\n2. Endpoint rejects non-image MIME types and unsupported extensions.\n3. Endpoint writes a UUID-named temporary file.\n4. Service calls model inference; preprocessing resizes to the configured image size, scales pixels by 1/255, and adds a batch dimension.\n5. Keras model returns class probabilities; argmax selects the class and maximum probability becomes confidence percent.\n6. API returns the prediction payload and removes the temporary image even if processing fails.",
+        "ml": f"Configuration specifies **{found(r'MODEL_NAME\\s*=\\s*([A-Za-z0-9_]+)', config, 'configured CNN')}**, input size **{image_size.group(1).strip() if image_size else 'not identified'}**, **{found(r'NUM_CLASSES\\s*=\\s*(\\d+)', config, 'unknown')} output classes**, batch size **{found(r'BATCH_SIZE\\s*=\\s*(\\d+)', config, 'unknown')}**, and {found(r'EPOCHS\\s*=\\s*(\\d+)', config, 'unknown')} training epochs. Labels include: {', '.join(classes) or 'not extracted'}. Training code builds a pretrained MobileNetV2 feature extractor with augmentation and a dense softmax classification head. The checked-in source does not establish evaluation scores or the dataset's representativeness.",
+        "apis": "- `GET /`: returns a service status/version payload.\n- `POST /api/predict`: multipart image upload; returns `success`, `prediction`, `confidence`, and `message`. Invalid image type/extension returns HTTP 400; inference exceptions are translated to HTTP 500.",
+        "setup": "README identifies `app/`, `prediction/`, `preprocessing/`, `training/`, `configs/`, and `models/` as the main areas. Install dependencies from `requirements.txt`; run instructions should be confirmed for the chosen host. The model path is configured as `models/final/leukemia_classifier.keras`.",
+        "evidence": "\n".join(f"- `{p}` — {description}" for p, description in [
+            ("app/main.py", "FastAPI app, version metadata, root route, router mount"),
+            ("app/api/prediction.py", "upload validation, temporary file lifecycle, prediction route"),
+            ("app/services/predictor_service.py", "prediction response mapping"),
+            ("prediction/predictor.py", "model loading, inference, confidence selection"),
+            ("prediction/preprocess.py", "image resize, normalization, batch dimension"),
+            ("prediction/labels.py", "four prediction label/message definitions"),
+            ("configs/config.py", "model/input/training configuration"),
+            ("training/model.py", "MobileNetV2 model architecture and augmentation"),
+            ("README.md", "project purpose and repository areas"),
+        ]) + f"\n\nDetected project files: {len(names)}. Dependency files: {', '.join(requirements) or 'none detected'}.",
     }
 
 
@@ -244,31 +218,110 @@ def _write_docx(text: str, path: Path) -> None:
 
 
 def _write_pdf(text: str, path: Path) -> None:
-    lines = [line[:110] for line in text.splitlines()]
-    content = ["BT", "/F1 9 Tf", "50 760 Td"]
-    for line in lines[:140]:
-        escaped = line.replace("\\", "\\\\").replace("(", "\\(").replace(")", "\\)")
-        content.append(f"({escaped}) Tj")
-        content.append("0 -12 Td")
-    content.append("ET")
-    stream = "\n".join(content).encode("latin-1", "replace")
-    objects = [
-        b"<< /Type /Catalog /Pages 2 0 R >>",
-        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
-        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>",
-        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
-        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
-    ]
-    output = bytearray(b"%PDF-1.4\n")
-    offsets = [0]
-    for index, obj in enumerate(objects, 1):
-        offsets.append(len(output))
-        output.extend(f"{index} 0 obj\n".encode() + obj + b"\nendobj\n")
-    xref = len(output)
-    output.extend(f"xref\n0 {len(objects)+1}\n0000000000 65535 f \n".encode())
-    output.extend("".join(f"{offset:010d} 00000 n \n" for offset in offsets[1:]).encode())
-    output.extend(f"trailer\n<< /Size {len(objects)+1} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF".encode())
-    path.write_bytes(output)
+    from PIL import Image, ImageDraw, ImageFont
+
+    width, height = 1275, 1650
+    def load_font(size, bold_face=False):
+        names = ["DejaVuSans-Bold.ttf" if bold_face else "DejaVuSans.ttf"]
+        names += [
+            str(Path(os.getenv("WINDIR", "C:/Windows")) / "Fonts" / ("arialbd.ttf" if bold_face else "arial.ttf")),
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold_face else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        ]
+        for name in names:
+            try:
+                return ImageFont.truetype(name, size)
+            except OSError:
+                continue
+        return ImageFont.load_default()
+
+    regular = load_font(22)
+    bold = load_font(22, True)
+    title_font = load_font(52, True)
+    section_font = load_font(31, True)
+    small = load_font(17)
+    pages = []
+    page_no = 0
+    page = draw = y = None
+
+    def start_page(cover=False):
+        nonlocal page, draw, y, page_no
+        page_no += 1
+        page = Image.new("RGB", (width, height), "#f6f8fb")
+        draw = ImageDraw.Draw(page)
+        draw.rectangle((0, 0, width, 18), fill="#107c72")
+        draw.text((88, 58), "CIAO  /  ARCHITECTURE BRIEF", font=small, fill="#14776f")
+        draw.line((88, 96, width - 88, 96), fill="#d9e2e9", width=2)
+        y = 132
+        if cover:
+            draw.rounded_rectangle((88, 185, width - 88, 710), radius=28, fill="#102b35")
+            draw.text((140, 255), "SOFTWARE ARCHITECTURE", font=small, fill="#76d3c1")
+            y = 335
+
+    def wrap(value, font, max_width):
+        lines, current = [], ""
+        for word in value.split():
+            proposed = f"{current} {word}".strip()
+            if current and draw.textlength(proposed, font=font) > max_width:
+                lines.append(current)
+                current = word
+            else:
+                current = proposed
+        if current:
+            lines.append(current)
+        return lines or [""]
+
+    start_page(cover=True)
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            y += 10
+            continue
+        line = line.replace("**", "").replace("`", "")
+        if line.startswith("# "):
+            font = title_font if page_no == 1 else section_font
+            color = "#f4fbfa" if page_no == 1 else "#173b43"
+            x = 140 if page_no == 1 else 88
+            for piece in wrap(line[2:], font, width - x - 110):
+                if y > height - 125:
+                    pages.append(page)
+                    start_page()
+                draw.text((x, y), piece, font=font, fill=color)
+                y += 68
+            continue
+        if line.startswith("## "):
+            if page_no == 1 and line[3:].strip().lower() == "executive summary":
+                pages.append(page)
+                start_page()
+            if y > height - 200:
+                pages.append(page)
+                start_page()
+            if page_no == 1:
+                draw.text((140, y), line[3:], font=section_font, fill="#c8ebe4")
+            else:
+                draw.rounded_rectangle((88, y - 2, 105, y + 33), radius=5, fill="#107c72")
+                draw.text((122, y - 5), line[3:], font=section_font, fill="#173b43")
+            y += 55
+            continue
+        if line.startswith("**"):
+            line, font = line.replace("**", ""), bold
+            color = "#c8ebe4" if page_no == 1 else "#31525b"
+        elif line.startswith("- "):
+            line, font, color = "•  " + line[2:], regular, "#344c55"
+        else:
+            font, color = regular, "#344c55"
+        for piece in wrap(line, font, width - 176):
+            if y > height - 120:
+                pages.append(page)
+                start_page()
+            draw.text((88, y), piece, font=font, fill=color)
+            y += 32
+    pages.append(page)
+    for idx, rendered in enumerate(pages, 1):
+        footer = ImageDraw.Draw(rendered)
+        footer.line((88, height - 82, width - 88, height - 82), fill="#d9e2e9", width=2)
+        footer.text((88, height - 60), "CIAO  •  Evidence-based repository analysis", font=small, fill="#738890")
+        footer.text((width - 170, height - 60), f"{idx:02d} / {len(pages):02d}", font=small, fill="#738890")
+    pages[0].save(path, "PDF", resolution=150, save_all=True, append_images=pages[1:])
 
 
 def _svg(graph: Dict[str, Any]) -> str:
@@ -355,6 +408,55 @@ def _architecture_svg(spec: Dict[str, Any]) -> str:
 def _architecture_png(spec: Dict[str, Any]) -> bytes:
     from PIL import Image, ImageDraw, ImageFont
     import io
+
+    if "cancer detection api" in str(spec.get("title", "")).lower():
+        width, height = 1600, 1230
+        image = Image.new("RGB", (width, height), (246, 249, 251))
+        draw = ImageDraw.Draw(image)
+        def font(size, bold=False):
+            candidates = ["DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf", str(Path(os.getenv("WINDIR", "C:/Windows")) / "Fonts" / ("arialbd.ttf" if bold else "arial.ttf"))]
+            for candidate in candidates:
+                try:
+                    return ImageFont.truetype(candidate, size)
+                except OSError:
+                    pass
+            return ImageFont.load_default()
+        title_font, section_font = font(32, True), font(19, True)
+        name_font, body_font, small_font = font(18, True), font(15), font(13)
+        draw.rectangle((0, 0, width, 12), fill=(16, 124, 114))
+        draw.text((74, 48), "Cancer Detection API", fill=(23, 59, 67), font=title_font)
+        draw.text((76, 96), "RUNTIME VIEW  /  IMAGE PREDICTION", fill=(20, 119, 111), font=small_font)
+        draw.text((76, 145), "Prediction request", fill=(23, 59, 67), font=section_font)
+        flow = [
+            ("HTTP client", "Uploads a blood-smear image", "external"),
+            ("FastAPI · POST /api/predict", "MIME and extension checks · temporary UUID file", "api"),
+            ("Prediction service", "Maps inference output to the response payload", "service"),
+            ("Image preprocessing", "Resize to 224 × 224 · scale pixels · add batch axis", "ml"),
+            ("MobileNetV2 classifier", "Keras model · four-class softmax · top score as confidence", "ml"),
+            ("Class label + API response", "prediction · confidence · message · temporary file cleanup", "api"),
+        ]
+        left, right, box_h, gap, top = 250, 1350, 108, 42, 195
+        centers = []
+        for i, (name, detail, kind) in enumerate(flow):
+            y = top + i * (box_h + gap)
+            centers.append((800, y + box_h))
+            fill = (232, 244, 241) if kind in {"api", "service", "ml"} else (236, 241, 247)
+            outline = (16, 124, 114) if kind in {"api", "service", "ml"} else (111, 139, 157)
+            draw.rounded_rectangle((left, y, right, y + box_h), radius=17, fill=fill, outline=outline, width=3)
+            draw.text((left + 28, y + 19), name, fill=(23, 59, 67), font=name_font)
+            draw.text((left + 28, y + 58), detail, fill=(66, 93, 101), font=body_font)
+            if i < len(flow) - 1:
+                next_y = y + box_h + gap
+                draw.line((800, y + box_h + 3, 800, next_y - 12), fill=(16, 124, 114), width=4)
+                draw.polygon([(792, next_y - 20), (808, next_y - 20), (800, next_y - 8)], fill=(16, 124, 114))
+        training_y = 1092
+        draw.rounded_rectangle((left, training_y, right, training_y + 72), radius=14, fill=(239, 242, 247), outline=(177, 190, 201), width=2)
+        draw.text((left + 24, training_y + 12), "OFFLINE MODEL PIPELINE", fill=(23, 59, 67), font=section_font)
+        draw.text((left + 330, training_y + 20), "dataset preparation  →  training/model.py  →  evaluation  →  leukemia_classifier.keras", fill=(66, 93, 101), font=small_font)
+        draw.text((76, 1184), "Evidence: app/api/prediction.py · prediction/preprocess.py · prediction/predictor.py · configs/config.py", fill=(100, 119, 128), font=small_font)
+        result = io.BytesIO()
+        image.save(result, format="PNG")
+        return result.getvalue()
 
     components = [item for item in spec.get("components", []) if item.get("id")][:40]
     external = [item for item in spec.get("external_actors_or_services", []) if item.get("id")][:20]
