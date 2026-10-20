@@ -111,12 +111,19 @@ def _evidence_based_report(
         flow_caveat = "No runtime sequence is asserted because one was not established from the input."
     store_text = ", ".join(f"`{p}`" for p in stores[:10]) if stores else "No persistence schema, database, cache, or queue was positively identified."
     deploy_text = ", ".join(f"`{p}`" for p in deploy_files[:12]) if deploy_files else "No deployment manifests or CI/CD workflow files were detected in the analyzed manifest. Hosting, environments, networking, and release process are not established."
+    external_actors = [
+        str(item.get("name") or item.get("id"))
+        for item in spec.get("external_actors_or_services", [])
+        if isinstance(item, dict) and (item.get("name") or item.get("id"))
+    ]
+    boundary = spec.get("system_boundary") or {}
+    boundary_name = boundary.get("name", project) if isinstance(boundary, dict) else str(boundary)
     open_questions = [
-        "What are the intended production environments, hosting platform, network boundaries, and deployment process?",
-        "Which users or services call the system, and what authentication and authorization requirements apply?",
-        "What persistent data, retention rules, backups, and privacy requirements apply?",
-        "What traffic, latency, availability, and recovery targets should the design meet?",
-        "Which monitoring, alerting, compliance, and operational ownership requirements are expected?",
+        "Who are the intended users and external systems, and what responsibilities do they have?",
+        "Which runtime containers, hosting platform, environments, and network boundaries are intended?",
+        "What data is persisted, where is it stored, and what retention, privacy, and backup rules apply?",
+        "What authentication, authorization, and secret-management requirements apply?",
+        "What performance, availability, recovery, monitoring, and alerting targets should the system meet?",
     ]
     component_table_rows = []
     if analyzed_components:
@@ -144,7 +151,7 @@ def _evidence_based_report(
         for line in component_lines:
             label = line[2:].replace("**", "").replace("|", "\\|")
             component_table_rows.append(f"| {label} | Not established from directory names alone | {tech_text} | Not established | See source imports and dependency manifests |")
-    return f"""# {heading or project}
+    return f"""# {heading or project} — Architecture Documentation
 
 **Source:** {source}<br>
 **Branch:** {metadata.get('branch', context.get('branch', 'Unavailable'))}<br>
@@ -152,17 +159,29 @@ def _evidence_based_report(
 **Generated:** {metadata.get('generated_at', 'Unavailable')}<br>
 **Files analyzed:** {len(evidence_paths) or 'Unavailable'}
 
-## 1. Overview
+## 1. Introduction and goals
 
 {purpose}
 
-**Scope:** {('the submitted source file and its visible declarations' if len(evidence_paths) == 1 else 'the files present in the analyzed repository or archive manifest')}. **Goals:** document evidenced purpose, structure, interfaces, and operational unknowns. **Non-goals:** infer unstated production behavior or claim runtime properties that source inspection cannot establish.
+**Stakeholders:** {(', '.join(external_actors) if external_actors else 'Not established by the provided repository evidence')}. **Goals:** explain the system purpose, structure, behavior, and operation using traceable evidence. **Non-goals:** claim production behavior or quality guarantees that the inspected source cannot establish.
 
-## 2. Architecture summary
+## 2. Constraints
 
-**Observed style:** {('single source module' if len(evidence_paths) == 1 else 'repository structure is organized into source areas; a monolith, service, or serverless deployment style is not established unless documented in the source')}. Technology evidence: {tech_text}. The deployment rationale is not recorded in the inspected files.
+**Technology evidence:** {tech_text}. **Input scope:** {('one submitted source file and its visible declarations' if len(evidence_paths) == 1 else f'{len(evidence_paths)} repository files listed in the analyzed manifest')}. Organizational, legal, budget, and performance constraints are not established unless documented in the source.
 
-## 3. Components
+## 3. System scope and context
+
+**System boundary:** {boundary_name}. **Submitted source:** {source}. The boundary describes the analyzed project; it does not assert a deployed network perimeter.
+
+**Known users and external systems:** {', '.join(external_actors) if external_actors else 'Not established by the provided repository evidence.'}
+
+**Evidence classification:** implementation claims below are tied to inspected source files; purpose statements are taken from project documentation where available; missing deployment or runtime facts are marked as not established.
+
+## 4. Solution strategy
+
+**Observed architecture style:** {('single source module' if len(evidence_paths) == 1 else 'The repository contains multiple source areas. A monolith, microservice, or serverless runtime style is not established by source layout alone.')}. **Detected technologies:** {tech_text}. The reason for these choices and any measured trade-offs are not recorded in the inspected files.
+
+## 5. Building blocks
 
 | Component / evidence area | Responsibility | Technology | Inputs / outputs | Dependencies |
 |---|---|---|---|---|
@@ -172,54 +191,52 @@ The component-level responsibilities come from source analysis where available; 
 
 Dependency manifests found: {', '.join(f'`{p}`' for p in dep_files) if dep_files else 'none detected in the analyzed manifest'}.
 
-## 4. Data flow
-
-{flow_text}
-
-{flow_caveat}
-
-## 5. Data model
-
-Persistence/model evidence files: {store_text} No entity relationships, storage engine, or schema are asserted unless shown by those files. Data retention and lifecycle are not established by repository structure alone.
-
-## 6. APIs and integrations
+**Interfaces and APIs:**
 
 {endpoints}
 
-Protocols, authentication, authorization, and external service behavior must be confirmed from handler and integration code. No API route was detected where route evidence is absent.
+**Data model and persistence:**
 
-## 7. Infrastructure and deployment
+Persistence/model evidence files: {store_text} Entity relationships, schema, and storage engine are only described when supported by these files.
+
+## 6. Runtime view
+
+{flow_text}
+
+{flow_caveat} Protocols and execution order are included only when source evidence establishes them.
+
+## 7. Deployment view
 
 Detected deployment/automation evidence: {deploy_text}
 
-Environments, CI/CD behavior, hosting, load balancers, private networks, and VPC boundaries are only described when the listed source files establish them; otherwise they are not specified.
+Environments, runtime containers, hosting, load balancers, and network boundaries are described only when the listed source files establish them. Otherwise they are **not established by the provided repository evidence**.
 
-## 8. Security
+## 8. Cross-cutting concepts
 
-Security-related paths detected: {', '.join(f'`{p}`' for p in auth_evidence[:12]) if auth_evidence else 'No security-specific path names were detected'}. This filename scan does not prove the presence or absence of controls. Authentication, authorization, secret storage, encryption, and threat controls are **not established** unless supported by implementation evidence.
+**Security evidence:** {', '.join(f'`{p}`' for p in auth_evidence[:12]) if auth_evidence else 'No security-specific path names were detected'}. Filename matches alone do not prove controls exist. Authentication, authorization, secret storage, encryption, and threat controls are not established unless supported by implementation evidence.
 
-## 9. Scalability and reliability
+**Operations and observability:** {', '.join(f'`{p}`' for p in test_files[:12]) if test_files else 'No test or operations files were detected in the analyzed manifest.'} Logging, metrics, tracing, health checks, and alerting are not specified unless evidenced in source.
 
-No traffic, latency, availability, failover, backup, cache, or queue characteristics are inferred from static source structure. Scaling limits and recovery behavior require deployment and runtime evidence.
+**Shared runtime concerns:** Error handling, configuration, and external-service behavior must be confirmed from implementation code; repository names alone are not treated as proof.
 
-## 10. Monitoring and observability
+## 9. Architecture decisions
 
-Tests or quality files detected: {', '.join(f'`{p}`' for p in test_files[:12]) if test_files else 'none detected in the analyzed manifest'}. Logging, metrics, tracing, alert thresholds, health checks, and retention are not specified unless evidenced in the source.
+- **ADR 1 — Use the observed repository structure.** Status: observed. Context: {('one source file was submitted' if len(evidence_paths) == 1 else 'the source areas listed in Section 5 are present')}. Decision rationale and alternatives are not recorded.
+- **ADR 2 — Technology choices.** Status: detected from source or dependency manifests. Evidence: {tech_text}. Selection rationale and measured trade-offs are not established.
+- **Assumption:** detected imports and declared routes indicate intended code relationships; runtime behavior may differ and requires verification.
 
-## 11. Key decisions and trade-offs (ADR style)
+## 10. Quality requirements
 
-- **Observed structure:** {('one submitted source file' if len(evidence_paths) == 1 else 'the source areas listed in Section 3')} is present in the analyzed input. The reason for this structure is not recorded.
-- **Technology choices:** {tech_text}. Their selection rationale and measured trade-offs are not established by dependency declarations alone.
-- **Assumption:** source imports and declared routes represent intended code relationships; actual runtime behavior may differ and must be verified.
+Traffic, latency, availability, capacity, recovery-time, and recovery-point targets are not established by static repository evidence. No performance or reliability guarantee is inferred.
 
-## 12. Risks, limitations, and future improvements
+## 11. Risks and technical debt
 
-- The purpose statement is taken from README prose where available; otherwise it remains unknown.
-- Static inspection cannot establish runtime behavior, deployment topology, system capacity, or security posture.
-- Add or maintain deployment, data lifecycle, security, monitoring, and performance evidence if those operational properties are required.
-- Review generated component groupings against actual entry points before treating them as a production architecture.
+- Static inspection cannot prove runtime behavior, deployment topology, system capacity, or security posture.
+- Data lifecycle, backup, and privacy requirements require confirmation from project owners or operational documentation.
+- Review inferred component groupings and relationships against actual entry points before using them as a production design.
+- Add deployment, quality-target, security, monitoring, and recovery documentation where those requirements apply.
 
-## 13. Glossary
+## 12. Glossary
 
 - **Evidence:** repository content directly observed during this analysis.
 - **Assumption:** an interpretation that is useful for describing structure but is not confirmed as runtime behavior.
