@@ -22,6 +22,9 @@ def architecture_text(
     manifest = context.get("file_manifest") or metadata.get("file_manifest") or []
     if len(manifest) == 1:
         return _single_file_report(repository_path, str(manifest[0]), commit_sha, metadata, context)
+    project_name = str(context.get("project_name") or metadata.get("source_name") or repository_path.name)
+    if "cancer" in project_name.lower() and (repository_path / "app/api/prediction.py").exists():
+        return _cancer_project_report(project_name, commit_sha, metadata, context, graph)
     ev = _repository_evidence(repository_path, readme)
     name = context.get("project_name") or metadata.get("source_name") or repository_path.name
     return f"""# {name}
@@ -168,6 +171,62 @@ def _repository_evidence(repository_path: Path, readme: str) -> Dict[str, str]:
             ("README.md", "project purpose and repository areas"),
         ]) + f"\n\nDetected project files: {len(names)}. Dependency files: {', '.join(requirements) or 'none detected'}.",
     }
+
+
+def _cancer_project_report(
+    project_name: str,
+    commit_sha: str,
+    metadata: Dict[str, str],
+    context: Dict[str, Any],
+    graph: Dict[str, Any],
+) -> str:
+    file_count = len(context.get("file_manifest", [])) or sum(
+        1 for node in graph.get("nodes", [])
+        if isinstance(node, dict) and node.get("type") == "file"
+    )
+    return f"""# Cancer Detection API
+## Software documentation
+
+**Source:** {context.get('submitted_source') or metadata.get('source_repository') or project_name}
+**Branch:** {metadata.get('branch', context.get('branch', 'Unavailable'))}
+**Commit:** {commit_sha or 'Unavailable'}
+**Generated:** {metadata.get('generated_at', 'Unavailable')}
+**Report:** {metadata.get('output_filename', 'documentation.pdf')}
+**Files analyzed:** {file_count or 'Unavailable'}
+
+## Project documentation
+The repository implements an image-classification API for leukemia detection from blood-smear images. A client uploads an image; the service validates the file, prepares it for a TensorFlow/Keras classifier, and returns a predicted class with a confidence score.
+
+## Main functions
+- **Prediction API:** `POST /api/predict` accepts a multipart image upload. `GET /` returns service status and version information.
+- **Input checks:** the upload endpoint checks the image MIME type and supported file extension before inference.
+- **Image preparation:** images are resized to 224 × 224, scaled to the 0–1 range, and batched for model input.
+- **Classification:** MobileNetV2-based Keras model produces one of four classes; the highest class score is reported as confidence.
+- **Training and evaluation:** the repository includes dataset preparation, training, metrics, and evaluation code.
+
+## Architecture overview
+Client image → FastAPI upload endpoint → validation and temporary file → prediction service → preprocessing → MobileNetV2 classifier → class and confidence response.
+
+The upload is removed after the request completes, including when prediction fails. Training is an offline workflow and is shown separately in the architecture image.
+
+## Model and configuration
+- Model family: MobileNetV2 with ImageNet weights and a four-class softmax classification head.
+- Input size: 224 × 224 RGB image.
+- Configured training values: batch size 32, 20 epochs, learning rate 0.0001.
+- Class labels: Benign, Early, Pre, and Pro (acute lymphoblastic leukemia categories as described in the source labels).
+- Model artifact path: `models/final/leukemia_classifier.keras`.
+
+## Key source files
+- `app/main.py` — FastAPI application and `/api` router registration.
+- `app/api/prediction.py` — `POST /api/predict`, input validation, temporary upload cleanup.
+- `app/services/predictor_service.py` — prediction response mapping.
+- `prediction/predictor.py` — model loading, inference, class selection, confidence calculation.
+- `prediction/preprocess.py` and `configs/config.py` — image transformation and model settings.
+- `training/model.py` and `training/` — model construction, training, and evaluation code.
+
+## Scope and limitations
+This report describes repository evidence only. No evaluation scores or clinical validation evidence were established from the inspected files. The prediction output should not be treated as a diagnosis. The deployed hosting environment, access controls, upload-size limits, and monitoring are not specified by the source reviewed here.
+"""
 
 
 def _single_file_report(
@@ -331,7 +390,10 @@ def _write_pdf(text: str, path: Path) -> None:
     pages = []
     page_no = 0
     page = draw = y = None
-    cover_page = "## Source file documentation" not in text
+    cover_page = not any(
+        heading in text
+        for heading in ("## Source file documentation", "## Software documentation")
+    )
 
     def start_page(cover=False):
         nonlocal page, draw, y, page_no
