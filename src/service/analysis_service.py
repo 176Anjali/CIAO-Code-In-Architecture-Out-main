@@ -194,7 +194,10 @@ class AnalysisService:
         except Exception as exc:
             print(f"CIAO_WARNING stage=analysis.graph_fallback detail={exc}")
             graph = {"nodes": [], "edges": []}
-        if not graph.get("nodes"):
+        if not any(
+            isinstance(node, dict) and node.get("type") == "file" and node.get("path")
+            for node in graph.get("nodes", [])
+        ):
             graph = self._fallback_file_graph(source_path)
         print(f"CIAO_TIMING stage=analysis.graph seconds={time.perf_counter()-graph_started:.3f} nodes={len(graph.get('nodes', []))} edges={len(graph.get('edges', []))}")
         graph_path = output_dir / "graph" / "repository_graph.json"
@@ -219,7 +222,7 @@ class AnalysisService:
                     candidate, _ = decoder.raw_decode(ollama_description[start:])
                     if isinstance(candidate, dict) and all(
                         key in candidate for key in ("components", "relationships", "external_actors_or_services")
-                    ):
+                    ) and (candidate.get("components") or not architecture_spec.get("components")):
                         architecture_spec = candidate
                         break
                 except json.JSONDecodeError:
@@ -361,10 +364,7 @@ class AnalysisService:
                 "name": path.name,
                 "path": str(path.resolve()),
             })
-        edges = []
-        for left, right in zip(nodes, nodes[1:]):
-            edges.append({"source": left["id"], "target": right["id"], "relationship": "SIBLING_FILE"})
-        return {"nodes": nodes, "edges": edges}
+        return {"nodes": nodes, "edges": []}
 
     def generated_file(self, project_id: str, kind: str) -> Path:
         base = self.output_dir / project_id
@@ -724,7 +724,10 @@ class AnalysisService:
         graph_builder = RepositoryKnowledgeGraph(str(repository_path))
         graph_builder.build()
         graph = graph_builder.to_dict()
-        if not graph.get("nodes"):
+        if not any(
+            isinstance(node, dict) and node.get("type") == "file" and node.get("path")
+            for node in graph.get("nodes", [])
+        ):
             graph = self._fallback_file_graph(repository_path)
         architecture_spec = build_architecture_spec_from_graph(
             graph,

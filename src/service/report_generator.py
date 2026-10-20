@@ -298,11 +298,11 @@ def _write_pdf(text: str, path: Path) -> None:
                 continue
         return ImageFont.load_default()
 
-    regular = load_font(22)
-    bold = load_font(22, True)
-    title_font = load_font(52, True)
-    section_font = load_font(31, True)
-    small = load_font(17)
+    regular = load_font(23)
+    bold = load_font(23, True)
+    title_font = load_font(54, True)
+    section_font = load_font(32, True)
+    small = load_font(18)
     pages = []
     page_no = 0
     page = draw = y = None
@@ -321,9 +321,9 @@ def _write_pdf(text: str, path: Path) -> None:
         draw.line((88, 96, width - 88, 96), fill="#d9e2e9", width=2)
         y = 132
         if cover:
-            draw.rounded_rectangle((88, 185, width - 88, 710), radius=28, fill="#102b35")
-            draw.text((140, 255), "SOFTWARE ARCHITECTURE", font=small, fill="#76d3c1")
-            y = 335
+            draw.rounded_rectangle((88, 145, width - 88, 610), radius=28, fill="#102b35")
+            draw.text((140, 195), "SOFTWARE ARCHITECTURE", font=small, fill="#76d3c1")
+            y = 270
 
     def wrap(value, font, max_width):
         lines, current = [], ""
@@ -339,13 +339,45 @@ def _write_pdf(text: str, path: Path) -> None:
         return lines or [""]
 
     start_page(cover=cover_page)
-    for raw in text.splitlines():
+    lines = text.splitlines()
+    line_index = 0
+    while line_index < len(lines):
+        raw = lines[line_index]
+        line_index += 1
         line = raw.strip()
         if not line:
             y += 10
             continue
+        if line.startswith("|"):
+            table_rows = [line]
+            while line_index < len(lines) and lines[line_index].strip().startswith("|"):
+                table_rows.append(lines[line_index].strip())
+                line_index += 1
+            rows = [[cell.strip().replace("**", "").replace("`", "") for cell in row.strip("|").split("|")] for row in table_rows]
+            rows = [row for row in rows if not row or not all(re.fullmatch(r":?-{2,}:?", cell.replace(" ", "")) for cell in row)]
+            if rows:
+                column_count = max(len(row) for row in rows)
+                table_left, table_right = 88, width - 88
+                column_width = (table_right - table_left) // column_count
+                cell_font = load_font(17)
+                cell_bold = load_font(17, True)
+                for row_number, row in enumerate(rows):
+                    row += [""] * (column_count - len(row))
+                    wrapped = [wrap(value.replace("<br>", " "), cell_bold if row_number == 0 else cell_font, column_width - 18) for value in row]
+                    row_height = max(46, max(len(cell_lines) for cell_lines in wrapped) * 23 + 18)
+                    if y + row_height > height - 120:
+                        pages.append(page)
+                        start_page()
+                    draw.rectangle((table_left, y, table_right, y + row_height), fill="#e7f0ec" if row_number == 0 else ("#ffffff" if row_number % 2 else "#f0f4f1"), outline="#d9e2e9", width=1)
+                    for column, cell_lines in enumerate(wrapped):
+                        x = table_left + column * column_width + 9
+                        for offset, cell_line in enumerate(cell_lines):
+                            draw.text((x, y + 8 + offset * 23), cell_line, font=cell_bold if row_number == 0 else cell_font, fill="#173b43" if row_number == 0 else "#344c55")
+                    y += row_height
+                y += 18
+            continue
         starts_bold = line.startswith("**")
-        line = line.replace("**", "").replace("`", "")
+        line = line.replace("<br>", " ").replace("<br/>", " ").replace("**", "").replace("`", "")
         if line.startswith("# "):
             is_cover = page_no == 1 and cover_page
             font = title_font if is_cover else section_font
@@ -359,6 +391,9 @@ def _write_pdf(text: str, path: Path) -> None:
                 y += 68
             continue
         if line.startswith("## "):
+            if cover_page and page_no == 1 and re.match(r"1\s*[.)]\s*Overview", line[3:].strip(), re.I):
+                pages.append(page)
+                start_page()
             if page_no == 1 and line[3:].strip().lower() == "executive summary":
                 pages.append(page)
                 start_page()

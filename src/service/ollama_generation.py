@@ -383,12 +383,41 @@ def build_architecture_spec_from_graph(
 def generate_documentation_report(
     graph: Dict[str, Any], *, readme: str, context: Dict[str, Any]
 ) -> str:
-    """Return a compact model architecture summary for inclusion in the report."""
-    evidence = "\n".join(
-        f"{node.get('path') or node.get('id')}: {node.get('type') or 'component'}"
-        for node in graph.get("nodes", [])[:60]
-        if isinstance(node, dict)
+    """Build model context from actual target source, not just graph filenames."""
+    root = Path(str(context.get("repository_path") or "."))
+    manifest = context.get("file_manifest") or []
+    preferred = ("readme", "requirements", "pyproject", "package.json", "setup.py", "main.py", "app.py", "api", "route", "service", "model", "predict", "train", "config", "docker", "workflow")
+    candidates = sorted(
+        (str(item) for item in manifest),
+        key=lambda name: (
+            min((index for index, token in enumerate(preferred) if token in Path(name).name.lower() or token in name.lower()), default=len(preferred)),
+            name.lower(),
+        ),
     )
+    evidence_sections: List[str] = []
+    evidence_size = 0
+    for relative in candidates:
+        path = Path(relative)
+        full_path = path if path.is_absolute() else root / path
+        try:
+            if not full_path.is_file() or full_path.stat().st_size > 250_000:
+                continue
+            source_lines = full_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        excerpt = "\n".join(f"{relative}:{index}: {line}" for index, line in enumerate(source_lines[:180], 1))
+        section = f"FILE {relative}\n{excerpt}"
+        if evidence_size + len(section) > 16_000:
+            continue
+        evidence_sections.append(section)
+        evidence_size += len(section)
+    if not evidence_sections:
+        evidence_sections = [
+            f"{node.get('path') or node.get('id')}: {node.get('type') or 'component'}"
+            for node in graph.get("nodes", [])[:60]
+            if isinstance(node, dict)
+        ]
+    evidence = "\n\n".join(evidence_sections)
     spec = generate_architecture_spec(
         graph, readme=readme, context=context, evidence=evidence
     )
