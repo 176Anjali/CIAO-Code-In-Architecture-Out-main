@@ -31,9 +31,10 @@ The existing Python static-analysis pipeline remains the source of architecture 
 relationships, and the output generator produces a report and a deterministic diagram. README
 content and source paths are included as evidence where present. The website and GitHub sync
 send the verified graph, README, configuration, and source evidence to the configured Ollama
-model. The model response is included in the project-specific report; generation fails clearly
-if Ollama is unavailable or returns empty content. Architecture diagrams are generated
-deterministically from the validated knowledge graph, so they do not require a model call.
+model. When Ollama is unavailable or returns invalid output, CIAO still creates a report from the
+statically extracted repository graph and records the model limitation. Architecture diagrams are
+generated deterministically from repository evidence; they do not require a model call or a
+PlantUML installation.
 CIAO defaults to `llama3.2:3b` at `http://localhost:11434`, uses a 4,096-token context,
 and requests a compact, evidence-backed architecture response. Set `OLLAMA_HOST`
 and `OLLAMA_MODEL` as needed. On an 8 GB CPU computer, if `llama3.2:3b` cannot load, run
@@ -44,9 +45,9 @@ restart CIAO; the application does not switch models silently.
 
 Each website generation makes one Ollama call for its concise architecture summary; the
 diagram itself is built deterministically from the extracted repository graph. If the model
-returns an invalid shape, CIAO retries once with the specific validation issue and reports
-the final reason so the failure can be diagnosed. `CIAO_TIMING` log entries show graph
-analysis and each output-rendering stage.
+returns an invalid shape, CIAO retries once and then completes with graph-based documentation.
+If Java/PlantUML is unavailable, CIAO uses its built-in PNG/SVG renderer. `CIAO_TIMING` and
+`CIAO_WARNING` log entries show analysis stages and any fallback used.
 
 The Ollama request uses a 4,096-token context and 1,024-token response limit. Set
 `CIAO_ARCHITECTURE_CONTEXT_CHARS` to control the maximum source-evidence text supplied to the

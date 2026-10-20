@@ -41,6 +41,7 @@ def generate_architecture_spec(
         "image_format": context.get("image_format"),
     }
     max_evidence = max(2_000, int(os.getenv("CIAO_ARCHITECTURE_CONTEXT_CHARS", "12000")))
+    timeout = max(10.0, float(os.getenv("CIAO_OLLAMA_TIMEOUT_SECONDS", "120")))
     # Never pass a broken, character-truncated JSON object as model context.
     serialized = json.dumps({
         "analysis_context": target,
@@ -52,7 +53,7 @@ def generate_architecture_spec(
     chunk_results = []
     from ollama import Client
 
-    client = Client(host=host)
+    client = Client(host=host, timeout=timeout)
     system_prompt = """You are CIAO, a source-grounded software documentation and architecture analyst. The target project is the repository identified in the analysis context. CIAO is only the analyzer; do not document CIAO unless CIAO is explicitly the submitted target. Base every project claim on the supplied target-repository evidence. Cite claims with relative file paths and line ranges where available. Do not infer capabilities from filenames or common conventions. Do not invent frameworks, APIs, models, datasets, metrics, databases, pipelines, deployment, security properties, or users. Label interpretations as inferences and state “Not established by the provided repository evidence” when evidence is missing.
 
 First identify the target project’s purpose and scope from its documentation and implementation. Then trace its actual entry points, components, APIs or interfaces, data flow, processing pipeline, integrations, configuration, tests, and deployment/CI behavior from source evidence. Distinguish documented claims from behavior verified in code.
@@ -284,36 +285,67 @@ def _normalize_boundary(value: Any) -> Dict[str, str]:
 def build_architecture_spec_from_graph(
     graph: Dict[str, Any], *, repository_path: Path, project_name: str
 ) -> Dict[str, Any]:
-    """Create the diagram's evidence-backed base spec without relying on a model."""
-    components = []
-    ids = set()
-    for node in graph.get("nodes", []):
-        if not isinstance(node, dict) or not node.get("id"):
+    """Create a readable file-level architecture from verified repository edges."""
+    root = repository_path.resolve()
+    graph_nodes = [node for node in graph.get("nodes", []) if isinstance(node, dict) and node.get("id")]
+    node_by_id = {str(node["id"]): node for node in graph_nodes}
+    files = []
+    for node in graph_nodes:
+        if node.get("type") != "file" or not node.get("path"):
             continue
+        path = Path(str(node["path"]))
+        relative = path.relative_to(root).as_posix() if path.is_absolute() else path.as_posix()
+        lowered = relative.lower()
+        if path.name == "__init__.py" or "/test/" in f"/{lowered}/" or path.name.startswith("test_"):
+            continue
+        files.append((node, relative))
+    files = files[:24]
+
+    # File-level imports are clearer than drawing every imported symbol and
+    # local variable as a separate architecture component.
+    components = []
+    file_ids = set()
+    module_to_file: Dict[str, List[str]] = {}
+    for node, relative in files:
         node_id = str(node["id"])
-        name = str(node.get("name") or node_id.rsplit(":", 1)[-1])
-        path = node.get("path")
-        evidence = [str(path)] if path else [f"Knowledge graph node: {node_id}"]
+        file_ids.add(node_id)
+        module_path = str(Path(relative).with_suffix("")).replace("/", ".").replace("\\", ".")
+        module_to_file.setdefault(module_path, []).append(node_id)
+        module_to_file.setdefault(Path(relative).stem, []).append(node_id)
         components.append({
             "id": node_id,
-            "name": name,
-            "responsibility": str(node.get("type") or "Repository component"),
-            "evidence": evidence,
+            "name": relative,
+            "responsibility": "Source module",
+            "evidence": [relative],
         })
-        ids.add(node_id)
+
     relationships = []
+    seen = set()
     for edge in graph.get("edges", []):
         if not isinstance(edge, dict):
             continue
-        source, target = str(edge.get("source") or ""), str(edge.get("target") or "")
-        if source not in ids or target not in ids:
+        source = str(edge.get("source") or "")
+        target = str(edge.get("target") or "")
+        if source in file_ids and target in file_ids:
+            target_id = target
+        elif source in file_ids and target in node_by_id and node_by_id[target].get("type") == "module":
+            module_name = str(node_by_id[target].get("name") or target.removeprefix("module:"))
+            matches = module_to_file.get(module_name) or module_to_file.get(module_name.rsplit(".", 1)[-1]) or []
+            target_id = next((item for item in matches if item != source), "") if len(set(matches)) == 1 else ""
+        else:
             continue
+        key = (source, target_id)
+        if not target_id or key in seen:
+            continue
+        seen.add(key)
+        source_name = next((relative for node, relative in files if str(node["id"]) == source), source)
+        target_name = next((relative for node, relative in files if str(node["id"]) == target_id), target_id)
         relationships.append({
             "source_id": source,
-            "target_id": target,
+            "target_id": target_id,
             "direction": "forward",
-            "label": str(edge.get("relationship") or edge.get("type") or "relates to"),
-            "evidence": [f"Knowledge graph edge: {source} -> {target}"],
+            "label": "imports",
+            "evidence": [f"{source_name} imports or references {target_name}"],
         })
     return _validate_architecture_spec({
         "title": f"{project_name} architecture",
@@ -322,7 +354,7 @@ def build_architecture_spec_from_graph(
         "components": components,
         "relationships": relationships,
         "principal_flow": [],
-        "unknowns": ["The diagram reflects statically extracted repository relationships; runtime behavior is not established."],
+        "unknowns": ["The diagram shows file-level repository structure and detected imports; runtime behavior is not established."],
     })
 
 

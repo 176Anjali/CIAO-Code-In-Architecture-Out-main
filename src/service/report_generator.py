@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -206,11 +207,22 @@ def write_diagram(architecture_spec: Dict[str, Any], path: Path, fmt: str) -> No
     path.parent.mkdir(parents=True, exist_ok=True)
     if fmt not in {"png", "svg"}:
         raise ValueError("image_format must be png or svg")
-    render_plantuml(
-        architecture_to_plantuml(architecture_spec),
-        path,
-        source_path=path.with_suffix(".puml"),
-    )
+    # The built-in renderer makes report generation independent of a Java or
+    # PlantUML installation. Keep PlantUML available as an explicit opt-in.
+    if os.getenv("CIAO_USE_PLANTUML", "").strip().lower() in {"1", "true", "yes"}:
+        try:
+            render_plantuml(
+                architecture_to_plantuml(architecture_spec),
+                path,
+                source_path=path.with_suffix(".puml"),
+            )
+            return
+        except Exception as exc:
+            print(f"CIAO_WARNING stage=diagram.plantuml_fallback detail={exc}")
+    if fmt == "svg":
+        path.write_text(_architecture_svg(architecture_spec), encoding="utf-8")
+    else:
+        path.write_bytes(_architecture_png(architecture_spec))
 
 
 def _write_docx(text: str, path: Path) -> None:
@@ -341,29 +353,56 @@ def _architecture_svg(spec: Dict[str, Any]) -> str:
 
 
 def _architecture_png(spec: Dict[str, Any]) -> bytes:
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageDraw, ImageFont
     import io
 
     components = [item for item in spec.get("components", []) if item.get("id")][:40]
     external = [item for item in spec.get("external_actors_or_services", []) if item.get("id")][:20]
     nodes = external + components
-    width, height = 1400, max(360, ((len(nodes) + 4) // 5) * 120)
+    columns = 4
+    rows = max(1, (len(nodes) + columns - 1) // columns)
+    width, height = 1500, max(360, 145 + rows * 150)
     image = Image.new("RGB", (width, height), (11, 18, 32))
     draw = ImageDraw.Draw(image)
-    positions = {item["id"]: (150 + (i % 5) * 270, 110 + (i // 5) * 120) for i, item in enumerate(nodes)}
+    try:
+        title_font = ImageFont.truetype("DejaVuSans.ttf", 22)
+        name_font = ImageFont.truetype("DejaVuSans.ttf", 15)
+        detail_font = ImageFont.truetype("DejaVuSans.ttf", 12)
+        label_font = ImageFont.truetype("DejaVuSans.ttf", 11)
+    except OSError:
+        title_font = name_font = detail_font = label_font = ImageFont.load_default()
+    positions = {item["id"]: (190 + (i % columns) * 370, 125 + (i // columns) * 150) for i, item in enumerate(nodes)}
+    draw.text((48, 36), str(spec.get("title", "Evidence-backed architecture"))[:90], fill=(237, 245, 242), font=title_font)
+    draw.text((50, 70), "Repository structure / detected file imports", fill=(139, 165, 174), font=detail_font)
     for relationship in spec.get("relationships", []):
         start = positions.get(relationship.get("source_id"))
         end = positions.get(relationship.get("target_id"))
         if not start or not end:
             continue
-        draw.line((start[0], start[1], end[0], end[1]), fill=(122, 162, 216), width=3)
-        draw.text(((start[0] + end[0]) // 2, (start[1] + end[1]) // 2 - 12), str(relationship.get("label", ""))[:28], fill=(197, 215, 239), anchor="mm")
-    draw.text((40, 30), str(spec.get("title", "Evidence-backed architecture"))[:90], fill=(243, 247, 255))
+        dx, dy = end[0] - start[0], end[1] - start[1]
+        distance = max((dx * dx + dy * dy) ** 0.5, 1)
+        scale = max(abs(dx) / 150, abs(dy) / 42, 1)
+        x1, y1 = start[0] + dx / scale, start[1] + dy / scale
+        x2, y2 = end[0] - dx / scale, end[1] - dy / scale
+        draw.line((x1, y1, x2, y2), fill=(104, 150, 142), width=2)
+        ux, uy = dx / distance, dy / distance
+        px, py = -uy, ux
+        draw.polygon([
+            (x2, y2),
+            (x2 - ux * 11 + px * 5, y2 - uy * 11 + py * 5),
+            (x2 - ux * 11 - px * 5, y2 - uy * 11 - py * 5),
+        ], fill=(137, 190, 169))
+        label = str(relationship.get("label", ""))[:22]
+        if label:
+            draw.text(((x1 + x2) / 2, (y1 + y2) / 2 - 8), label, fill=(172, 200, 189), font=label_font, anchor="mm")
     for item in nodes:
         x, y = positions[item["id"]]
-        draw.rounded_rectangle((x - 105, y - 38, x + 105, y + 38), radius=12, fill=(36, 75, 115), outline=(139, 184, 242), width=2)
-        draw.text((x, y - 10), str(item.get("name") or item["id"])[:26], fill=(243, 247, 255), anchor="mm")
-        draw.text((x, y + 12), str(item.get("responsibility", ""))[:38], fill=(197, 215, 239), anchor="mm")
+        is_external = item in external
+        fill = (22, 42, 45) if not is_external else (29, 39, 53)
+        border = (124, 187, 158) if not is_external else (114, 145, 178)
+        draw.rounded_rectangle((x - 150, y - 43, x + 150, y + 43), radius=14, fill=fill, outline=border, width=2)
+        draw.text((x, y - 11), str(item.get("name") or item["id"])[:36], fill=(235, 245, 239), font=name_font, anchor="mm")
+        draw.text((x, y + 14), str(item.get("responsibility", "External service" if is_external else "Component"))[:36], fill=(155, 179, 176), font=detail_font, anchor="mm")
     result = io.BytesIO()
     image.save(result, format="PNG")
     return result.getvalue()

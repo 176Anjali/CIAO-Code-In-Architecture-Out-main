@@ -187,9 +187,13 @@ class AnalysisService:
         self._validate_analysis_context(context, source_path)
         analysis_started = time.perf_counter()
         graph_started = time.perf_counter()
-        graph_builder = RepositoryKnowledgeGraph(str(source_path))
-        graph_builder.build()
-        graph = graph_builder.to_dict()
+        try:
+            graph_builder = RepositoryKnowledgeGraph(str(source_path))
+            graph_builder.build()
+            graph = graph_builder.to_dict()
+        except Exception as exc:
+            print(f"CIAO_WARNING stage=analysis.graph_fallback detail={exc}")
+            graph = {"nodes": [], "edges": []}
         if not graph.get("nodes"):
             graph = self._fallback_file_graph(source_path)
         print(f"CIAO_TIMING stage=analysis.graph seconds={time.perf_counter()-graph_started:.3f} nodes={len(graph.get('nodes', []))} edges={len(graph.get('edges', []))}")
@@ -197,7 +201,7 @@ class AnalysisService:
         graph_path.parent.mkdir(parents=True, exist_ok=True)
         graph_path.write_text(json.dumps(graph, indent=2, ensure_ascii=False), encoding="utf-8")
         summary = self._summarize_graph(graph)
-        readme = self._read_readme(source_path, context.file_manifest)
+        readme = self._read_readme(source_path)
         architecture_spec = build_architecture_spec_from_graph(
             graph, repository_path=source_path, project_name=context.project_name
         )
@@ -207,20 +211,15 @@ class AnalysisService:
             ollama_description = generate_documentation_report(
                 graph, readme=readme, context=asdict(context),
             )
-        except RuntimeError as exc:
-            if "Ollama returned an invalid architecture_spec" in str(exc):
-                # A malformed or truncated model response must not prevent the
-                # user from receiving the graph-backed report and diagram.
-                ollama_description = (
-                    "Ollama returned an invalid architecture specification; "
-                    "the report and diagram use the statically extracted repository graph.\n\n"
-                    + json.dumps(architecture_spec, indent=2, ensure_ascii=False)
-                )
-                print(f"CIAO_WARNING stage=analysis.ollama_invalid detail={exc}")
-            elif require_ollama:
-                raise
-            else:
-                ollama_description = "Ollama generation was skipped; only static repository evidence is available."
+        except Exception as exc:
+            # Model output, connectivity, or client errors must not block the
+            # evidence-backed report and deterministic diagram.
+            ollama_description = (
+                "Ollama analysis was unavailable for this run; the report and diagram "
+                "use the statically extracted repository graph.\n\n"
+                + json.dumps(architecture_spec, indent=2, ensure_ascii=False)
+            )
+            print(f"CIAO_WARNING stage=analysis.ollama_fallback detail={exc}")
         print(f"CIAO_TIMING stage=documentation.prepare seconds={time.perf_counter()-report_started:.3f}")
         document_path = output_dir / f"documentation.{document_format}"
         diagram_path = output_dir / f"architecture.{image_format}"
@@ -340,10 +339,7 @@ class AnalysisService:
 
     def _fallback_file_graph(self, source_path: Path) -> Dict[str, Any]:
         root = source_path if source_path.is_dir() else source_path.parent
-        files = [
-            path for path in root.rglob("*")
-            if path.is_file() and ".git" not in path.parts and path.stat().st_size <= 2_000_000
-        ][:120]
+        files = iter_repository_files(root)[:120]
         nodes = []
         for path in files:
             nodes.append({

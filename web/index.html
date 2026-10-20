@@ -12,11 +12,33 @@
     @media(max-width:620px){main{padding:38px 16px}.hero{margin:32px 0 25px}.hero-copy{font-size:14px}.input-mode{grid-template-columns:1fr}.mode-option span{justify-content:flex-start;padding:0 15px}.choice-row,.output-grid{grid-template-columns:1fr}.metadata{grid-template-columns:1fr 1fr}}
     @media(prefers-reduced-motion:reduce){*,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
   </style>
+  <style>
+    :root{--muted:#a4b1c4;--line:#26354a;--panel:#101a29;--aqua:#b7efd6;--blue:#86a8ff}
+    body{background:radial-gradient(ellipse at 82% 4%,#1d3448 0,transparent 28%),radial-gradient(ellipse at 8% 35%,#152235 0,transparent 35%),#080d14}
+    main{width:min(1080px,100%);padding-top:50px}
+    .brand{color:#c6d4e4;letter-spacing:.14em}.brand-mark{border-color:#3c6b63;background:linear-gradient(145deg,#17342f,#0e1b24);color:var(--aqua);box-shadow:inset 0 1px #ffffff18}
+    .hero{display:grid;grid-template-columns:minmax(0,1fr) minmax(260px,.72fr);align-items:center;gap:40px;max-width:none;margin:48px 0 34px}
+    .eyebrow{display:flex;align-items:center;gap:9px;color:#afc3d2}.eyebrow:before{content:"";width:22px;height:1px;background:var(--aqua)}
+    .hero h1{max-width:620px;font-size:clamp(44px,6.3vw,70px);letter-spacing:-.058em;line-height:1.02}.hero h1 span{color:#b7efd6}
+    .hero-copy{max-width:560px;color:#a6b4c6;line-height:1.8}
+    .hero-art{position:relative;min-height:235px;overflow:hidden;padding:22px;border:1px solid #31455a;border-radius:18px;background:linear-gradient(145deg,#111d2b,#0a121d);box-shadow:0 22px 60px #0005,inset 0 1px #ffffff12}
+    .art-top{display:flex;align-items:center;justify-content:space-between;color:#a3b5c8;font-size:10px;font-weight:750;letter-spacing:.13em;text-transform:uppercase}.art-live{display:flex;align-items:center;gap:7px;color:#b8ead1;font-size:10px;letter-spacing:.04em;text-transform:none}.art-live:before{content:"";width:6px;height:6px;border-radius:50%;background:#9de1b9;box-shadow:0 0 12px #9de1b988}
+    .art-flow{position:relative;display:grid;grid-template-columns:.8fr 1.1fr .8fr;align-items:center;gap:14px;margin-top:34px}.art-flow:before,.art-flow:after{content:"";position:absolute;top:50%;height:1px;background:linear-gradient(90deg,#466274,#8fb8a6);z-index:0}.art-flow:before{left:25%;right:62%}.art-flow:after{left:62%;right:25%}
+    .art-node{position:relative;z-index:1;display:grid;gap:6px;padding:13px 11px;border:1px solid #34485c;border-radius:11px;background:#111d2b;box-shadow:0 8px 20px #0003}.art-node small{color:#95a9bd;font-size:9px;letter-spacing:.08em;text-transform:uppercase}.art-node strong{overflow:hidden;color:#e7efe9;font-size:11px;text-overflow:ellipsis;white-space:nowrap}.art-node.core{border-color:#557a71;background:linear-gradient(145deg,#19332e,#12232a)}.art-node.core strong{color:#cbf1dc}.art-foot{margin:23px 0 0;color:#7890a5;font-size:10px;letter-spacing:.02em}
+    .card{border-color:#314257;border-radius:20px;background:linear-gradient(145deg,#111d2b,#0c1521 74%);box-shadow:0 32px 100px #0006,inset 0 1px #ffffff12}
+    .section-title{font-size:16px;letter-spacing:-.015em}.step{border-color:#496c63;background:#142b2b;color:#b7efd6}
+    .input{min-height:52px;border-color:#34465d;border-radius:11px;background:#0a1320}.input:focus{border-color:#92c9b2;box-shadow:0 0 0 3px #92c9b21c}
+    .mode-option span{min-height:48px;border-color:#31435a;background:#0b1522}.mode-option input:checked+span{border-color:#669183;background:#142b2b;color:#e1f2e9;box-shadow:inset 0 0 0 1px #8dc9ae22}.mode-option input:checked+span:before{background:#b7efd6;box-shadow:0 0 11px #b7efd677}
+    .button{min-height:58px;border:1px solid #b5e6d0;border-radius:12px;background:linear-gradient(110deg,#c3f0d8,#9ed9c0);color:#10211c;box-shadow:0 12px 30px #83c9aa24;font-size:14px}.button:hover:not(:disabled){filter:brightness(1.04);transform:translateY(-2px)}.button:focus-visible{outline-color:#c3f0d8}
+    .status{border-color:#2d4055;border-radius:12px;background:#0a1420}.status-dot{background:#a5dfbd}.status[data-state="error"]{border-color:#71404a;color:#ffd7db}
+    .metadata,.output{border-color:#2c4057;border-radius:13px;background:#0b1522}.output h3{font-size:14px}.download{color:#b8d0ff}.preview{border-color:#314258;border-radius:11px;background:#080f18}.note{color:#91a1b4}.note strong{color:#d9e5ec}
+    @media(max-width:700px){main{padding-top:32px}.hero{grid-template-columns:1fr;gap:22px;margin:34px 0 25px}.hero-art{min-height:205px}.art-flow{margin-top:25px}.hero h1{font-size:clamp(42px,12vw,60px)}}
+  </style>
 </head>
 <body>
 <main>
   <div class="brand"><span class="brand-mark" aria-hidden="true">C</span><span>CIAO · CODE IN, ARCHITECTURE OUT</span></div>
-  <header class="hero"><p class="eyebrow">Evidence in. Architecture made clear.</p><h1>Understand how your <span>code fits together.</span></h1><p class="hero-copy">Give CIAO a GitHub repository, source file, or ZIP archive. Get a source-grounded documentation report and an architecture diagram you can explore and download.</p></header>
+  <header class="hero"><div><p class="eyebrow">Evidence in. Architecture made clear.</p><h1>Understand how your <span>code fits together.</span></h1><p class="hero-copy">Give CIAO a GitHub repository, source file, or ZIP archive. Get a source-grounded documentation report and an architecture diagram you can explore and download.</p></div><div class="hero-art" aria-hidden="true"><div class="art-top"><span>Architecture preview</span><span class="art-live">Evidence mapped</span></div><div class="art-flow"><div class="art-node"><small>Entry point</small><strong>API router</strong></div><div class="art-node core"><small>Core system</small><strong>Application</strong></div><div class="art-node"><small>Data layer</small><strong>Repository</strong></div></div><p class="art-foot">Components and connections grounded in your source.</p></div></header>
   <section class="card" aria-labelledby="form-title">
     <h2 class="section-title" id="form-title"><span class="step">01</span> Choose your source</h2>
     <form id="form" novalidate>
