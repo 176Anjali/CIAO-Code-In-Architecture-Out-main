@@ -40,7 +40,9 @@ def generate_architecture_spec(
         "document_format": context.get("document_format"),
         "image_format": context.get("image_format"),
     }
-    max_evidence = max(2_000, int(os.getenv("CIAO_ARCHITECTURE_CONTEXT_CHARS", "12000")))
+    max_evidence = min(24_000, max(4_000, int(os.getenv("CIAO_ARCHITECTURE_CONTEXT_CHARS", "12000"))))
+    context_tokens = min(32_768, max(4_096, int(os.getenv("CIAO_OLLAMA_CONTEXT_TOKENS", "8192"))))
+    output_tokens = min(8_192, max(1_024, int(os.getenv("CIAO_OLLAMA_OUTPUT_TOKENS", "3072"))))
     timeout = max(10.0, float(os.getenv("CIAO_OLLAMA_TIMEOUT_SECONDS", "120")))
     # Never pass a broken, character-truncated JSON object as model context.
     serialized = json.dumps({
@@ -54,9 +56,11 @@ def generate_architecture_spec(
     from ollama import Client
 
     client = Client(host=host, timeout=timeout)
-    system_prompt = """You are CIAO, a source-grounded software documentation and architecture analyst. The target project is the repository identified in the analysis context. CIAO is only the analyzer; do not document CIAO unless CIAO is explicitly the submitted target. Base every project claim on the supplied target-repository evidence. Cite claims with relative file paths and line ranges where available. Do not infer capabilities from filenames or common conventions. Do not invent frameworks, APIs, models, datasets, metrics, databases, pipelines, deployment, security properties, or users. Label interpretations as inferences and state “Not established by the provided repository evidence” when evidence is missing.
+    system_prompt = """You are CIAO, a source-grounded software documentation and architecture analyst. The target project is the repository identified in the analysis context. CIAO is only the analyzer; do not document CIAO unless CIAO is explicitly the submitted target. Base every project claim on the supplied target-repository evidence. Cite each component and relationship with exact relative file paths and line ranges from the supplied evidence. Never invent citations. Do not infer capabilities from filenames or common conventions. Do not invent frameworks, APIs, models, datasets, metrics, databases, pipelines, deployment, security properties, or users. Label interpretations as inferences and state “Not established by the provided repository evidence” when evidence is missing.
 
 First identify the target project’s purpose and scope from its documentation and implementation. Then trace its actual entry points, components, APIs or interfaces, data flow, processing pipeline, integrations, configuration, tests, and deployment/CI behavior from source evidence. Distinguish documented claims from behavior verified in code.
+
+Analyze the implementation evidence, not only README claims or directory names. Identify the entry point, follow calls/imports to core processing, and distinguish executable source from examples and tests. Prefer fewer well-supported components over a long file inventory. Keep to at most 10 components, 12 relationships, 5 external actors/services, and 8 ordered flow steps. Relationships and flow steps must be supported by code; shared imports alone do not prove runtime order.
 
 Return only JSON for architecture_spec with these keys:
 title, system_boundary, external_actors_or_services, components, relationships,
@@ -71,7 +75,7 @@ Use the provenance values from the analysis context: submitted source, target pr
     for chunk in [serialized]:
         prompt = f"""Describe the submitted target using only this repository evidence. Do not infer details from names alone. Keep the result concise and include only components and relationships directly supported by evidence. Use the analysis_context values for provenance; do not describe CIAO unless it is the submitted target. If evidence is insufficient, use empty lists and explain the limitation in unknowns.
 
-Return exactly one JSON object with this shape:
+Return exactly one JSON object with this shape. Limit the response to at most 10 components, 12 relationships, 5 external actors, and 8 principal-flow steps so the complete object fits the response budget:
 {{"title":"short title","system_boundary":{{"id":"system","name":"target"}},"external_actors_or_services":[],"components":[{{"id":"stable-id","name":"name","responsibility":"one sentence","technology":"technology or Not established by the provided repository evidence","inputs":["evidenced input or Not established by the provided repository evidence"],"outputs":["evidenced output or Not established by the provided repository evidence"],"evidence":["path:line or graph evidence"]}}],"relationships":[{{"source_id":"stable-id","target_id":"stable-id","direction":"forward","label":"protocol and verb phrase when evidenced","evidence":["path:line or graph evidence"]}}],"principal_flow":[],"unknowns":[]}}
 Use [] for every collection with no supported items. All relationship IDs must match an included component or external actor.
 
@@ -83,7 +87,13 @@ Repository context:
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
             ]
-            response = _request_architecture_json(client, model=model, messages=messages)
+            response = _request_architecture_json(
+                client,
+                model=model,
+                messages=messages,
+                context_tokens=context_tokens,
+                output_tokens=output_tokens,
+            )
             chunk_results.append(response)
         except Exception as exc:
             if isinstance(exc, RuntimeError) and str(exc).startswith("Ollama returned"):
@@ -101,6 +111,8 @@ def _request_architecture_json(
     *,
     model: str,
     messages: List[Dict[str, str]],
+    context_tokens: int = 8192,
+    output_tokens: int = 3072,
 ) -> Dict[str, Any]:
     last_error: Exception | None = None
     last_excerpt = ""
@@ -125,7 +137,7 @@ def _request_architecture_json(
             model=model,
             messages=request_messages,
             format="json",
-            options={"num_ctx": 4096, "num_predict": 1024, "temperature": 0},
+            options={"num_ctx": context_tokens, "num_predict": output_tokens, "temperature": 0},
         )
         content = _response_content(response)
         last_excerpt = _safe_excerpt(content)
