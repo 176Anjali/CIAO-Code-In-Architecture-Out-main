@@ -211,6 +211,19 @@ class AnalysisService:
             ollama_description = generate_documentation_report(
                 graph, readme=readme, context=asdict(context),
             )
+            # Reuse the validated architecture result for both deliverables so
+            # component names and relationships stay consistent in PDF/DOCX and diagram.
+            decoder = json.JSONDecoder()
+            for start in (index for index, char in enumerate(ollama_description) if char == "{"):
+                try:
+                    candidate, _ = decoder.raw_decode(ollama_description[start:])
+                    if isinstance(candidate, dict) and all(
+                        key in candidate for key in ("components", "relationships", "external_actors_or_services")
+                    ):
+                        architecture_spec = candidate
+                        break
+                except json.JSONDecodeError:
+                    continue
         except Exception as exc:
             # Model output, connectivity, or client errors must not block the
             # evidence-backed report and deterministic diagram.

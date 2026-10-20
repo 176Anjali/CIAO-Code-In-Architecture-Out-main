@@ -61,15 +61,18 @@ First identify the target project’s purpose and scope from its documentation a
 Return only JSON for architecture_spec with these keys:
 title, system_boundary, external_actors_or_services, components, relationships,
 principal_flow, unknowns. Each component must have id, name, responsibility, and
-evidence. Each relationship must have source_id, target_id, direction, label, and
-evidence. Use empty lists and explain limitations in unknowns when evidence is insufficient.
+evidence, plus technology, inputs, and outputs when established by the supplied source.
+Use the exact text "Not established by the provided repository evidence" for missing
+component technology, inputs, or outputs. Each relationship must have source_id,
+target_id, direction, label, and evidence. Use empty lists and explain limitations
+in unknowns when evidence is insufficient.
 
 Use the provenance values from the analysis context: submitted source, target project name, branch, full commit SHA when available, and generation date/time with timezone. Do not substitute CIAO’s own repository metadata. Return valid output matching the application schema; do not add commentary outside it."""
     for chunk in [serialized]:
         prompt = f"""Describe the submitted target using only this repository evidence. Do not infer details from names alone. Keep the result concise and include only components and relationships directly supported by evidence. Use the analysis_context values for provenance; do not describe CIAO unless it is the submitted target. If evidence is insufficient, use empty lists and explain the limitation in unknowns.
 
 Return exactly one JSON object with this shape:
-{{"title":"short title","system_boundary":{{"id":"system","name":"target"}},"external_actors_or_services":[],"components":[{{"id":"stable-id","name":"name","responsibility":"one sentence","evidence":["path:line or graph evidence"]}}],"relationships":[{{"source_id":"stable-id","target_id":"stable-id","direction":"forward","label":"verb phrase","evidence":["path:line or graph evidence"]}}],"principal_flow":[],"unknowns":[]}}
+{{"title":"short title","system_boundary":{{"id":"system","name":"target"}},"external_actors_or_services":[],"components":[{{"id":"stable-id","name":"name","responsibility":"one sentence","technology":"technology or Not established by the provided repository evidence","inputs":["evidenced input or Not established by the provided repository evidence"],"outputs":["evidenced output or Not established by the provided repository evidence"],"evidence":["path:line or graph evidence"]}}],"relationships":[{{"source_id":"stable-id","target_id":"stable-id","direction":"forward","label":"protocol and verb phrase when evidenced","evidence":["path:line or graph evidence"]}}],"principal_flow":[],"unknowns":[]}}
 Use [] for every collection with no supported items. All relationship IDs must match an included component or external actor.
 
 Repository context:
@@ -333,6 +336,9 @@ def build_architecture_spec_from_graph(
             ),
             "evidence": [relative],
             "functions": functions[:12],
+            "technology": Path(relative).suffix.lstrip(".").upper() or "Not established by the provided repository evidence",
+            "inputs": ["Not established by the provided repository evidence"],
+            "outputs": ["Not established by the provided repository evidence"],
         })
 
     relationships = []
