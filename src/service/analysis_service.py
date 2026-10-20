@@ -485,6 +485,14 @@ class AnalysisService:
                 )
 
             timestamp = datetime.now(timezone.utc).isoformat()
+            documentation_artifact = next(
+                (item for item in artifacts if item.kind in {"documentation", "architecture_documentation"}),
+                None,
+            )
+            diagram_artifact = next(
+                (item for item in artifacts if item.kind == "architecture_diagram"),
+                None,
+            )
             record = {
                 "project_id": project_key,
                 "job_id": job_id,
@@ -498,20 +506,30 @@ class AnalysisService:
                 "summary": summary,
                 "graph_path": str(project_output_dir / "graph" / "repository_graph.json"),
                 "documentation": {
-                    "status": "ready",
-                    "path": str(project_output_dir / "architecture"),
+                    "status": "ready" if documentation_artifact else "unavailable",
+                    "path": documentation_artifact.path if documentation_artifact else None,
+                    "name": documentation_artifact.name if documentation_artifact else None,
                 },
                 "diagrams": {
-                    "status": "source_ready" if pipeline_name == PipelineName.GRAPH_VALIDATION else "pending",
-                    "count": 1 if pipeline_name == PipelineName.GRAPH_VALIDATION else 0,
-                    "items": [
+                    "status": "ready" if diagram_artifact else (
+                        "source_ready" if pipeline_name == PipelineName.GRAPH_VALIDATION else "unavailable"
+                    ),
+                    "count": 1 if diagram_artifact else (1 if pipeline_name == PipelineName.GRAPH_VALIDATION else 0),
+                    "items": ([
+                        {
+                            "name": diagram_artifact.name,
+                            "path": diagram_artifact.path,
+                            "rendered": True,
+                            "format": Path(diagram_artifact.path).suffix.lstrip("."),
+                        }
+                    ] if diagram_artifact else [
                         {
                             "name": "architecture.puml",
                             "path": str(project_output_dir / "architecture" / "architecture.puml"),
                             "rendered": False,
                             "reason": "PNG/SVG rendering requires PlantUML.",
                         }
-                    ] if pipeline_name == PipelineName.GRAPH_VALIDATION else [],
+                    ] if pipeline_name == PipelineName.GRAPH_VALIDATION else []),
                 },
                 "changes": [],
                 "artifacts": [artifact.to_dict() for artifact in artifacts],
@@ -651,6 +669,8 @@ class AnalysisService:
                 "CIAO_REPOMIX_CONFIG_PATH": str(config_path),
                 "CIAO_FULL_CODE_PATH": str(source_path),
                 "CIAO_DOCUMENTATION_PATH": str(documentation_path),
+                "CIAO_ARCHITECTURE_IMAGE_FORMAT": "png",
+                "CIAO_RENDER_PLANTUML": "0",
                 "PYTHONIOENCODING": "utf-8",
                 "PYTHONUTF8": "1",
             }
@@ -700,6 +720,18 @@ class AnalysisService:
                 + ", ".join(missing)
             )
 
+        diagram_path = documentation_path.with_name("architecture.png")
+        graph_builder = RepositoryKnowledgeGraph(str(repository_path))
+        graph_builder.build()
+        graph = graph_builder.to_dict()
+        if not graph.get("nodes"):
+            graph = self._fallback_file_graph(repository_path)
+        architecture_spec = build_architecture_spec_from_graph(
+            graph,
+            repository_path=repository_path,
+            project_name=repository_path.name,
+        )
+        write_diagram(architecture_spec, diagram_path, "png")
         artifacts = [
             ArtifactMetadata(
                 name=source_path.name,
@@ -714,6 +746,15 @@ class AnalysisService:
                 stage="documentation",
             ),
         ]
+        if diagram_path.is_file():
+            artifacts.append(
+                ArtifactMetadata(
+                    name=diagram_path.name,
+                    kind="architecture_diagram",
+                    path=str(diagram_path),
+                    stage="diagram_rendering",
+                )
+            )
         for artifact in artifacts:
             artifact_path = Path(artifact.path)
             artifact.checksum = self._file_checksum(artifact_path)
@@ -722,6 +763,8 @@ class AnalysisService:
         return {
             "source_bytes": source_path.stat().st_size,
             "documentation_bytes": documentation_path.stat().st_size,
+            "diagram_path": str(diagram_path) if diagram_path.is_file() else None,
+            "diagram_name": diagram_path.name if diagram_path.is_file() else None,
             "prompt_documentation": documentation_path.read_text(
                 encoding="utf-8", errors="replace"
             ),

@@ -180,7 +180,7 @@ def get_project_documentation(project_id: str) -> dict:
 def get_documentation_file(project_id: str) -> FileResponse:
     project = service.get_project(project_id)
     artifact = next(
-        (item for item in project["artifacts"] if item["kind"] == "architecture_documentation"),
+        (item for item in project["artifacts"] if item["kind"] in {"architecture_documentation", "documentation"}),
         None,
     )
     if not artifact:
@@ -195,6 +195,23 @@ def get_project_diagrams(project_id: str) -> dict:
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     return {"project_id": project_id, "diagrams": project["diagrams"]}
+
+
+@app.get("/api/projects/{project_id}/diagrams/image")
+def get_project_diagram_image(project_id: str) -> FileResponse:
+    try:
+        project = service.get_project(project_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    artifact = next(
+        (item for item in project["artifacts"] if item["kind"] == "architecture_diagram"),
+        None,
+    )
+    if not artifact or not Path(artifact["path"]).is_file():
+        raise HTTPException(status_code=404, detail="Rendered architecture image is not available")
+    suffix = Path(artifact["path"]).suffix.lower()
+    media_type = "image/svg+xml" if suffix == ".svg" else "image/png"
+    return FileResponse(artifact["path"], media_type=media_type, filename=artifact["name"])
 
 
 @app.get("/api/projects/{project_id}/diagrams/source")

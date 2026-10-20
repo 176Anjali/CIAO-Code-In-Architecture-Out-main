@@ -12,6 +12,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Mapping, Sequence, Tuple
 import aiofiles
 import tiktoken
 from ollama import AsyncClient
+from src.service.plantuml_renderer import remove_plantuml_source, render_architecture_png
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -411,10 +412,22 @@ async def async_main() -> None:
     md_parts.extend(filter(None, sections))
     md_parts.append(" ")
 
+    report = "\n\n".join(md_parts)
+    image_format = os.getenv("CIAO_ARCHITECTURE_IMAGE_FORMAT", "png").strip().lower()
+    diagram_path = MD_PATH.with_name(f"architecture.{image_format}")
+    render_plantuml = os.getenv("CIAO_RENDER_PLANTUML", "1").strip().lower() not in {"0", "false", "no"}
+    if render_plantuml:
+        report, diagram_count = render_architecture_png(report, diagram_path, image_format)
+    else:
+        report, diagram_count = remove_plantuml_source(report, diagram_path.name)
     async with aiofiles.open(MD_PATH, "w", encoding="utf-8") as file:
-        await file.write("\n\n".join(md_parts))
+        await file.write(report)
 
     print(f"✅ Markdown written to {MD_PATH}")
+    if render_plantuml:
+        print(f"✅ Architecture image written to {diagram_path}; removed {diagram_count} PlantUML block(s) from the report")
+    else:
+        print(f"✅ Removed {diagram_count} PlantUML block(s); the analysis service renders the architecture image")
 
 
 async def run() -> None:
